@@ -352,3 +352,56 @@ def effective_potential_u(u: NumericScalar, M: NumericScalar) -> float:
     if u_val <= 0.0:
         raise ValueError(f"Inverse radius u must be strictly positive (u > 0); got {u_val}.")
     return (u_val * u_val) * (1.0 - 2.0 * mass * u_val)
+
+
+def weak_field_deflection_angle(M: NumericScalar, b: NumericScalar) -> float:
+    """Compute the leading-order weak-field gravitational deflection angle alpha = 4M / b.
+
+    Assumes geometric units (G = c = 1) and the asymptotic weak-field regime b >> b_crit.
+    The returned angle is in radians (dimensionless).
+
+    Parameters
+    ----------
+    M : NumericScalar
+        Black hole mass parameter (M > 0) [L].
+    b : NumericScalar
+        Photon impact parameter b = L / E (b > 0) [L].
+
+    Returns
+    -------
+    float
+        Leading-order Einstein deflection angle 4M / b [rad].
+    """
+    mass = validate_mass(M)
+    b_val = validate_impact_parameter(b)
+    alpha = (4.0 * mass) / b_val
+    if not math.isfinite(alpha):
+        raise ValueError(f"Weak-field deflection angle overflowed for M={mass}, b={b_val}.")
+    return alpha
+
+
+def second_order_weak_field_deflection(M: NumericScalar, b: NumericScalar) -> float:
+    """Compute the second-order post-Newtonian deflection angle 4M/b + 15*pi*M^2 / (4*b^2).
+
+    Useful for verifying that the numerical residual (alpha_num - 4M/b) scales as O((M/b)^2)
+    in the weak-field regime.
+
+    Parameters
+    ----------
+    M : NumericScalar
+        Black hole mass parameter (M > 0) [L].
+    b : NumericScalar
+        Photon impact parameter (b > 0) [L].
+
+    Returns
+    -------
+    float
+        Second-order weak-field deflection angle [rad].
+    """
+    mass = validate_mass(M)
+    b_val = validate_impact_parameter(b)
+    ratio = mass / b_val
+    alpha = 4.0 * ratio + 0.25 * 15.0 * math.pi * (ratio * ratio)
+    if not math.isfinite(alpha):
+        raise ValueError(f"Second-order deflection angle overflowed for M={mass}, b={b_val}.")
+    return alpha
