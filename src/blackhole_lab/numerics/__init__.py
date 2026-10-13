@@ -3,9 +3,11 @@
 from blackhole_lab.numerics.geodesics import (
     GeodesicConfig,
     GeodesicResult,
+    PhotonInitialConditions,
     RadialDirection,
     SolverStatus,
     TerminationReason,
+    compute_initial_conditions,
     first_integral_radicand,
     initial_du_dphi,
     orbit_ode_rhs,
@@ -15,9 +17,11 @@ from blackhole_lab.numerics.geodesics import (
 __all__ = [
     "GeodesicConfig",
     "GeodesicResult",
+    "PhotonInitialConditions",
     "RadialDirection",
     "SolverStatus",
     "TerminationReason",
+    "compute_initial_conditions",
     "first_integral_radicand",
     "initial_du_dphi",
     "orbit_ode_rhs",
