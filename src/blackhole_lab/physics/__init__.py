@@ -8,9 +8,11 @@ from blackhole_lab.physics.schwarzschild import (
     photon_sphere_radius,
     reference_scales,
     schwarzschild_radius,
+    second_order_weak_field_deflection,
     validate_impact_parameter,
     validate_mass,
     validate_radius,
+    weak_field_deflection_angle,
 )
 
 __all__ = [
@@ -21,7 +23,9 @@ __all__ = [
     "photon_sphere_radius",
     "reference_scales",
     "schwarzschild_radius",
+    "second_order_weak_field_deflection",
     "validate_impact_parameter",
     "validate_mass",
     "validate_radius",
+    "weak_field_deflection_angle",
 ]
