@@ -1,4 +1,4 @@
-"""BlackHole-Relativity-Lab: Milestone 1 — Schwarzschild Photon Geodesics Engine.
+"""BlackHole-Relativity-Lab: Schwarzschild Spacetime & Photon Geodesics Engine.
 
 All core equations use geometric units (G = c = 1) and Schwarzschild coordinates
 (t, r, theta, phi) restricted to the equatorial plane (theta = pi / 2).
@@ -16,10 +16,12 @@ from blackhole_lab.numerics.geodesics import (
     solve_photon_geodesic,
 )
 from blackhole_lab.physics.schwarzschild import (
+    SchwarzschildScales,
     critical_impact_parameter,
     effective_potential_u,
     metric_coefficient_f,
     photon_sphere_radius,
+    reference_scales,
     schwarzschild_radius,
     validate_impact_parameter,
     validate_mass,
@@ -39,6 +41,7 @@ __all__ = [
     "GeodesicDiagnostics",
     "GeodesicResult",
     "RadialDirection",
+    "SchwarzschildScales",
     "SolverStatus",
     "TerminationReason",
     "compute_first_integral_residuals",
@@ -50,6 +53,7 @@ __all__ = [
     "metric_coefficient_f",
     "orbit_ode_rhs",
     "photon_sphere_radius",
+    "reference_scales",
     "schwarzschild_radius",
     "solve_photon_geodesic",
     "validate_impact_parameter",
