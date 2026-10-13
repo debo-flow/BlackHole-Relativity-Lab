@@ -17,6 +17,14 @@ from blackhole_lab.numerics.geodesics import (
     orbit_ode_rhs,
     solve_photon_geodesic,
 )
+from blackhole_lab.numerics.lensing import (
+    DeflectionResult,
+    PhotonFate,
+    asymptotic_tail_angle,
+    calculate_deflection_angle,
+    classify_photon_fate,
+    unwrap_azimuthal_angle,
+)
 from blackhole_lab.physics.schwarzschild import (
     SchwarzschildScales,
     critical_impact_parameter,
@@ -25,9 +33,11 @@ from blackhole_lab.physics.schwarzschild import (
     photon_sphere_radius,
     reference_scales,
     schwarzschild_radius,
+    second_order_weak_field_deflection,
     validate_impact_parameter,
     validate_mass,
     validate_radius,
+    weak_field_deflection_angle,
 )
 from blackhole_lab.validation.diagnostics import (
     GeodesicDiagnostics,
@@ -35,18 +45,23 @@ from blackhole_lab.validation.diagnostics import (
     evaluate_geodesic_diagnostics,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "__version__",
+    "DeflectionResult",
     "GeodesicConfig",
     "GeodesicDiagnostics",
     "GeodesicResult",
+    "PhotonFate",
     "PhotonInitialConditions",
     "RadialDirection",
     "SchwarzschildScales",
     "SolverStatus",
     "TerminationReason",
+    "asymptotic_tail_angle",
+    "calculate_deflection_angle",
+    "classify_photon_fate",
     "compute_first_integral_residuals",
     "compute_initial_conditions",
     "critical_impact_parameter",
@@ -59,8 +74,11 @@ __all__ = [
     "photon_sphere_radius",
     "reference_scales",
     "schwarzschild_radius",
+    "second_order_weak_field_deflection",
     "solve_photon_geodesic",
+    "unwrap_azimuthal_angle",
     "validate_impact_parameter",
     "validate_mass",
     "validate_radius",
+    "weak_field_deflection_angle",
 ]
