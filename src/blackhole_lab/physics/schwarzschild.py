@@ -13,6 +13,12 @@ where the lapse function is:
 In geometric units (G = c = 1), mass M, radial coordinate r, and impact parameter b
 all have dimensions of length.
 
+Reference Scales
+----------------
+- Schwarzschild radius (event horizon): r_s = 2M
+- Photon-sphere radius (unstable circular null orbit): r_ph = 3M
+- Critical impact parameter: b_crit = 3 * sqrt(3) * M
+
 Coordinate Singularity Note
 ---------------------------
 At r = r_s = 2M, f(r) = 0 and the metric component g_rr = f(r)^(-1) diverges.
@@ -26,11 +32,37 @@ specifically documented.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from typing import Union
 
 import numpy as np
 
 NumericScalar = Union[int, float, np.number]
+
+_SQRT3: float = math.sqrt(3.0)
+_CRIT_FACTOR: float = 3.0 * _SQRT3
+
+
+@dataclass(frozen=True)
+class SchwarzschildScales:
+    """Characteristic length scales of a Schwarzschild black hole in geometric units (G = c = 1).
+
+    Attributes
+    ----------
+    M : float
+        Black hole mass parameter (M > 0).
+    r_s : float
+        Schwarzschild event-horizon radius r_s = 2M.
+    r_ph : float
+        Photon-sphere radius r_ph = 3M.
+    b_crit : float
+        Critical photon impact parameter b_crit = 3 * sqrt(3) * M.
+    """
+
+    M: float
+    r_s: float
+    r_ph: float
+    b_crit: float
 
 
 def _ensure_finite_scalar(value: object, name: str) -> float:
@@ -43,13 +75,24 @@ def _ensure_finite_scalar(value: object, name: str) -> float:
     return float_val
 
 
+def _ensure_finite_result(value: float, name: str, M: float) -> float:
+    """Ensure a derived physical scale did not overflow to infinity."""
+    if not math.isfinite(value) or value <= 0.0:
+        raise ValueError(
+            f"Computed {name} = {value} is non-finite or underflowed for mass M = {M}. "
+            "Choose a mass M within safe IEEE-754 floating-point bounds."
+        )
+    return value
+
+
 def validate_mass(M: NumericScalar) -> float:
     """Validate the Schwarzschild black hole mass parameter M in geometric units (G = c = 1).
 
     Parameters
     ----------
     M : NumericScalar
-        Black hole mass parameter (must be finite and strictly positive, M > 0).
+        Black hole mass parameter (must be finite, strictly positive M > 0, and
+        within safe floating-point bounds so 3*sqrt(3)*M does not overflow).
 
     Returns
     -------
@@ -61,11 +104,16 @@ def validate_mass(M: NumericScalar) -> float:
     TypeError
         If M is not a real numeric scalar.
     ValueError
-        If M is NaN, infinite, or M <= 0.
+        If M is NaN, infinite, M <= 0, or large enough to overflow reference scales.
     """
     mass = _ensure_finite_scalar(M, "Mass M")
     if mass <= 0.0:
         raise ValueError(f"Mass M must be strictly positive (M > 0); got {mass}.")
+    if not math.isfinite(_CRIT_FACTOR * mass):
+        raise ValueError(
+            f"Mass M = {mass} is too large: reference scale b_crit = 3*sqrt(3)*M overflows "
+            "floating-point representation."
+        )
     return mass
 
 
@@ -107,8 +155,7 @@ def validate_radius(
         raise ValueError(f"Radius r must be strictly positive (r > 0); got {radius}.")
 
     if M is not None:
-        mass = validate_mass(M)
-        r_s = 2.0 * mass
+        r_s = schwarzschild_radius(M)
         if math.isclose(radius, r_s, rel_tol=1e-15, abs_tol=0.0):
             raise ValueError(
                 f"Radius r = {radius} coincides with the Schwarzschild coordinate "
@@ -159,7 +206,10 @@ def validate_impact_parameter(b: NumericScalar) -> float:
 
 
 def schwarzschild_radius(M: NumericScalar) -> float:
-    """Compute the Schwarzschild event-horizon radius r_s = 2M.
+    """Compute the Schwarzschild event-horizon radius r_s = 2M in geometric units (G = c = 1).
+
+    At r = r_s = 2M, the Schwarzschild metric function f(r) = 1 - 2M/r vanishes,
+    marking the event horizon (coordinate singularity in Schwarzschild coordinates).
 
     Parameters
     ----------
@@ -172,14 +222,15 @@ def schwarzschild_radius(M: NumericScalar) -> float:
         Schwarzschild radius r_s = 2M.
     """
     mass = validate_mass(M)
-    return 2.0 * mass
+    return _ensure_finite_result(2.0 * mass, "r_s", mass)
 
 
 def photon_sphere_radius(M: NumericScalar) -> float:
-    """Compute the Schwarzschild photon-sphere radius r_ph = 3M.
+    """Compute the Schwarzschild photon-sphere radius r_ph = 3M in geometric units (G = c = 1).
 
-    At r_ph = 3M, unstable circular photon orbits exist at the maximum of the
-    null effective potential V_eff(r) = (1 - 2M/r) / r^2.
+    At r_ph = 3M (u_ph = 1 / (3M)), the null effective potential V_eff(r) = (1 - 2M/r) / r^2
+    attains its unique unstable maximum V_eff,max = 1 / (27 M^2), permitting unstable
+    circular photon orbits (d^2u/dphi^2 = -u + 3Mu^2 = 0).
 
     Parameters
     ----------
@@ -192,11 +243,14 @@ def photon_sphere_radius(M: NumericScalar) -> float:
         Photon-sphere radius r_ph = 3M.
     """
     mass = validate_mass(M)
-    return 3.0 * mass
+    return _ensure_finite_result(3.0 * mass, "r_ph", mass)
 
 
 def critical_impact_parameter(M: NumericScalar) -> float:
-    """Compute the critical impact parameter b_crit = 3 * sqrt(3) * M.
+    """Compute the critical impact parameter b_crit = 3 * sqrt(3) * M in geometric units (G = c = 1).
+
+    Derived from the peak of the null effective potential at r_ph = 3M:
+        b_crit = r_ph / sqrt(f(r_ph)) = 3M / sqrt(1 - 2/3) = 3 * sqrt(3) * M.
 
     For an ingoing photon originating outside the photon sphere (r_0 > 3M):
     - b < b_crit: the photon crosses the peak of the effective potential and is captured.
@@ -214,7 +268,32 @@ def critical_impact_parameter(M: NumericScalar) -> float:
         Critical impact parameter b_crit = 3 * sqrt(3) * M.
     """
     mass = validate_mass(M)
-    return 3.0 * math.sqrt(3.0) * mass
+    return _ensure_finite_result(_CRIT_FACTOR * mass, "b_crit", mass)
+
+
+def reference_scales(M: NumericScalar) -> SchwarzschildScales:
+    """Compute all three reference scales (r_s, r_ph, b_crit) for a Schwarzschild black hole.
+
+    Reuses ``schwarzschild_radius``, ``photon_sphere_radius``, and
+    ``critical_impact_parameter`` to return a validated, immutable bundle.
+
+    Parameters
+    ----------
+    M : NumericScalar
+        Black hole mass parameter (M > 0) in geometric units (G = c = 1).
+
+    Returns
+    -------
+    SchwarzschildScales
+        Dataclass containing M, r_s = 2M, r_ph = 3M, and b_crit = 3 * sqrt(3) * M.
+    """
+    mass = validate_mass(M)
+    return SchwarzschildScales(
+        M=mass,
+        r_s=schwarzschild_radius(mass),
+        r_ph=photon_sphere_radius(mass),
+        b_crit=critical_impact_parameter(mass),
+    )
 
 
 def metric_coefficient_f(
