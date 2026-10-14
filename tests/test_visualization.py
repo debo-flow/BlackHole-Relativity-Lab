@@ -15,6 +15,7 @@ from blackhole_lab.visualization.plots import (
     classify_lensing_regime,
     plot_cartesian_trajectory,
     plot_deflection_curve,
+    plot_deflection_error_curve,
     plot_lensing_comparison,
     plot_radius_vs_phi,
     simulate_lensing_bundle,
@@ -110,6 +111,11 @@ def test_simulate_lensing_bundle_and_comparison_plots() -> None:
     assert "Deflection" in ax_def.get_title()
     plt.close(fig_def)
 
+    # Error vs impact parameter plot
+    fig_err, ax_err = plot_deflection_error_curve(bundle)
+    assert "Error" in ax_err.get_title()
+    plt.close(fig_err)
+
 
 def test_single_trajectory_plots_and_near_critical_annotation() -> None:
     """Verify plot_cartesian_trajectory and plot_radius_vs_phi with DeflectionResult input."""
@@ -139,8 +145,14 @@ def test_visualization_invalid_input_handling() -> None:
     with pytest.raises(ValueError, match="non-empty"):
         plot_deflection_curve([])
 
+    with pytest.raises(ValueError, match="non-empty"):
+        plot_deflection_error_curve([])
+
     with pytest.raises(TypeError):
         plot_deflection_curve(["invalid"])  # type: ignore[list-item]
+
+    with pytest.raises(TypeError):
+        plot_deflection_error_curve(["invalid"])  # type: ignore[list-item]
 
     res_m1 = solve_photon_geodesic(GeodesicConfig(M=1.0, r0=20.0, b=8.0))
     res_m2 = solve_photon_geodesic(GeodesicConfig(M=2.0, r0=40.0, b=16.0))
