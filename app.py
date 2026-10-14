@@ -1,7 +1,8 @@
-"""Streamlit interactive laboratory for BlackHole-Relativity-Lab (Milestones 1 & 2).
+"""Streamlit interactive laboratory for BlackHole-Relativity-Lab (Milestones 1, 2 & 3).
 
-Preserves all Milestone 1 equatorial photon geodesic features and integrates the
-Milestone 2 Gravitational Lensing & Light-Deflection analysis engine.
+Preserves all Milestone 1 equatorial photon geodesic features and Milestone 2
+gravitational lensing features while adding the Milestone 3 Black Hole Shadow &
+Photon Sphere Imaging section.
 
 Run locally with:
     streamlit run app.py
@@ -25,16 +26,25 @@ from blackhole_lab.numerics.lensing import (
     PhotonFate,
     calculate_deflection_angle,
 )
+from blackhole_lab.numerics.shadow import (
+    ObserverRayModel,
+    ShadowGridConfig,
+    ShadowRayTracingResult,
+    trace_black_hole_shadow,
+)
 from blackhole_lab.physics.schwarzschild import (
     reference_scales,
+    shadow_angular_radius,
 )
 from blackhole_lab.visualization.plots import (
     classify_lensing_regime,
+    plot_black_hole_shadow,
     plot_cartesian_trajectory,
     plot_deflection_curve,
     plot_deflection_error_curve,
     plot_lensing_comparison,
     plot_radius_vs_phi,
+    plot_shadow_radial_profile,
 )
 
 
@@ -44,24 +54,7 @@ def resolve_impact_parameter(
     b_value: float,
     b_over_M_value: float,
 ) -> float:
-    """Resolve dimensional impact parameter b [L] from either b or dimensionless b / M.
-
-    Parameters
-    ----------
-    mass_M : float
-        Black hole mass parameter M [L].
-    input_mode : str
-        Either ``"Dimensional b"`` or ``"Dimensionless b / M"``.
-    b_value : float
-        Dimensional impact parameter b [L].
-    b_over_M_value : float
-        Dimensionless ratio b / M [1].
-
-    Returns
-    -------
-    float
-        Dimensional impact parameter b [L].
-    """
+    """Resolve dimensional impact parameter b [L] from either b or dimensionless b / M."""
     if input_mode == "Dimensionless b / M":
         return float(b_over_M_value * mass_M)
     return float(b_value)
@@ -79,11 +72,7 @@ def run_cached_single_trajectory(
     method: str,
     apply_asymptotic_correction: bool,
 ) -> DeflectionResult:
-    """Compute a single photon geodesic and its deflection analysis with parameter-keyed caching.
-
-    Because every physical and numerical control is an explicit value argument, any
-    parameter change in the UI automatically invalidates stale cached results.
-    """
+    """Compute a single photon geodesic and its deflection analysis with parameter-keyed caching."""
     config = GeodesicConfig(
         M=M,
         r0=r0,
@@ -116,12 +105,7 @@ def run_cached_lensing_sweep(
     method: str,
     apply_asymptotic_correction: bool,
 ) -> tuple[list[DeflectionResult], list[str]]:
-    """Run a multi-impact-parameter gravitational lensing sweep with parameter-keyed caching.
-
-    Returns both the list of valid ``DeflectionResult`` objects and any per-ray error
-    messages so a single invalid ray (e.g., forbidden barrier at small r0) does not
-    crash the entire sweep.
-    """
+    """Run a multi-impact-parameter gravitational lensing sweep with parameter-keyed caching."""
     results: list[DeflectionResult] = []
     errors: list[str] = []
     outer_r = max(1.5 * r0, 50.0 * M)
@@ -153,6 +137,35 @@ def run_cached_lensing_sweep(
             errors.append(f"b/M = {b_over_m:.4f} (b = {b_val:.4f}): {exc}")
 
     return results, errors
+
+
+@st.cache_data(show_spinner=False, max_entries=32)
+def run_cached_shadow_image(
+    M: float,
+    r_obs: float,
+    width: int,
+    height: int,
+    fov_rad: float,
+    ray_model: ObserverRayModel,
+    phi_max: float,
+    rtol: float,
+    atol: float,
+    method: str,
+) -> ShadowRayTracingResult:
+    """Compute a 2D ray-traced Schwarzschild black hole shadow with parameter-keyed caching."""
+    cfg = ShadowGridConfig(
+        M=M,
+        r_obs=r_obs,
+        width=width,
+        height=height,
+        fov_rad=fov_rad,
+        ray_model=ray_model,
+        phi_max=phi_max,
+        rtol=rtol,
+        atol=atol,
+        method=method,
+    )
+    return trace_black_hole_shadow(cfg)
 
 
 def build_sweep_b_over_m_grid(
@@ -191,20 +204,20 @@ def build_sweep_b_over_m_grid(
 
 
 def main() -> None:
-    """Render the Schwarzschild Photon Geodesics & Gravitational Lensing laboratory."""
+    """Render the Schwarzschild Photon Geodesics, Lensing & Shadow Imaging laboratory."""
     st.set_page_config(
-        page_title="BlackHole-Relativity-Lab | Schwarzschild Geodesics & Lensing",
+        page_title="BlackHole-Relativity-Lab | Geodesics, Lensing & Shadow",
         layout="wide",
     )
 
     st.title("BlackHole-Relativity-Lab")
     st.subheader(
-        "Schwarzschild Spacetime, Photon Geodesics & Gravitational Light Deflection"
+        "Schwarzschild Spacetime, Photon Geodesics, Gravitational Lensing & Black Hole Shadow"
     )
     st.markdown(
         """
         This laboratory numerically integrates the **exact Schwarzschild null-geodesic orbit equation**
-        in the equatorial plane ($\\theta = \\pi/2$) using geometric units ($G = c = 1$).
+        in the equatorial plane ($\\theta = \\pi/2$) using geometric units ($G = c = 1$, where length unit $[L] = GM/c^2$).
         Plots display actual numerical output from `scipy.integrate.solve_ivp` in Schwarzschild coordinates,
         not schematic drawings or synthetic camera photographs.
         """
@@ -219,13 +232,13 @@ def main() -> None:
         value=1.0,
         step=0.1,
         format="%.3f",
-        help="In geometric units (G = c = 1), mass M sets the characteristic length scale.",
+        help="In geometric units (G = c = 1), mass M sets the characteristic length scale GM/c².",
     )
 
     scales = reference_scales(mass_M)
 
     r0 = st.sidebar.number_input(
-        "Starting radius r₀",
+        "Starting / Observer radius r₀",
         min_value=float(scales.r_s * 1.05),
         max_value=float(1000.0 * mass_M),
         value=float(50.0 * mass_M),
@@ -314,12 +327,12 @@ def main() -> None:
     atol = 10.0**log10_atol
     phi_max = phi_max_turns * 2.0 * math.pi
 
-    # Characteristic scales panel (Milestone 1 + Milestone 2 reference scales)
+    # Characteristic scales panel
     st.markdown("### Characteristic Schwarzschild Scales")
     col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Schwarzschild Radius r_s = 2M", f"{scales.r_s:.5f}")
-    col2.metric("Photon Sphere r_ph = 3M", f"{scales.r_ph:.5f}")
-    col3.metric("Critical Impact b_crit = 3√3 M", f"{scales.b_crit:.5f}")
+    col1.metric("Schwarzschild Radius r_s = 2GM/c²", f"{scales.r_s:.5f}")
+    col2.metric("Photon Sphere r_ph = 3GM/c²", f"{scales.r_ph:.5f}")
+    col3.metric("Shadow Radius b_shadow = 3√3 GM/c²", f"{scales.b_crit:.5f}")
     col4.metric("Dimensionless b / M", f"{b / mass_M:.5f}")
     col5.metric("Ratio b / b_crit", f"{b / scales.b_crit:.5f}")
 
@@ -467,16 +480,8 @@ def main() -> None:
     for lens_warn in deflection_res.warnings:
         st.warning(f"**Lensing Regime Notice:** {lens_warn}")
 
-    # Multi-Impact-Parameter Sweep & Strong- vs. Weak-Field Comparison
+    # Multi-Impact-Parameter Sweep
     st.markdown("### Multi-Parameter Lensing Sweep (Weak-Field vs. Strong-Field)")
-    st.markdown(
-        """
-        Sweep across multiple dimensionless impact parameters $b/M$ to compare **subcritical capture**
-        ($b < b_{\\mathrm{crit}}$), **near-critical logarithmic divergence** ($b \\to b_{\\mathrm{crit}}^+$),
-        and **weak-field convergence** ($\\alpha \\to 4M/b$ as $b/M \\gg 1$).
-        """
-    )
-
     scol1, scol2, scol3, scol4 = st.columns(4)
     b_min_over_m = scol1.number_input(
         "Sweep minimum (b_min / M)",
@@ -495,7 +500,6 @@ def main() -> None:
         value=float(max(6.0, default_b_max)),
         step=1.0,
         format="%.2f",
-        help="Must remain below r₀ * sqrt(1 - 2M/r₀) so initial conditions are classically allowed.",
     )
     sweep_points = scol3.slider(
         "Number of sweep trajectories",
@@ -507,7 +511,6 @@ def main() -> None:
     include_near_crit = scol4.checkbox(
         "Sample near b_crit = 3√3 M",
         value=True,
-        help="Adds sample rays near the critical impact parameter to resolve strong-field bending.",
     )
 
     try:
@@ -535,7 +538,6 @@ def main() -> None:
         st.warning(f"**Skipped Sweep Ray:** {err_msg}")
 
     if sweep_results:
-        # Select up to 7 representative rays across the sweep for a clean coordinate-space bundle plot
         if len(sweep_results) > 7:
             indices = np.linspace(0, len(sweep_results) - 1, 7, dtype=int)
             bundle_subset = [sweep_results[int(i)] for i in indices]
@@ -557,31 +559,114 @@ def main() -> None:
         st.pyplot(fig_err_curve)
         plt.close(fig_err_curve)
 
+    st.divider()
+
+    # =========================================================================
+    # MILESTONE 3: BLACK HOLE SHADOW & PHOTON SPHERE IMAGING LABORATORY
+    # =========================================================================
+    st.markdown("## Black Hole Shadow & Photon Sphere Imaging Engine")
+    st.markdown(
+        """
+        Simulate the two-dimensional observer image plane for a static observer at distance
+        $r_{\\mathrm{obs}} > 3M$ and compare the three characteristic gravitational scales:
+        - **Schwarzschild Event Horizon:** $r_s = 2GM/c^2 = 2M$
+        - **Photon Sphere Radius:** $r_{\\mathrm{ph}} = 3GM/c^2 = 3M$
+        - **Apparent Shadow Radius (Distant Observer):** $b_{\\mathrm{shadow}} = 3\\sqrt{3}\\,GM/c^2 \\approx 5.19615\\,M$
+        """
+    )
+
+    sh_col1, sh_col2, sh_col3, sh_col4 = st.columns(4)
+    img_width = sh_col1.slider(
+        "Image Width (px)",
+        min_value=15,
+        max_value=121,
+        value=51,
+        step=2,
+    )
+    img_height = sh_col2.slider(
+        "Image Height (px)",
+        min_value=15,
+        max_value=121,
+        value=51,
+        step=2,
+    )
+    default_obs_r = max(float(r0), float(3.2 * mass_M))
+    psi_crit_default = shadow_angular_radius(default_obs_r, mass_M)
+    default_fov_deg = min(math.degrees(3.2 * psi_crit_default), 100.0)
+    fov_deg = sh_col3.number_input(
+        "Field of View (degrees)",
+        min_value=1.0,
+        max_value=120.0,
+        value=float(round(default_fov_deg, 2)),
+        step=1.0,
+        format="%.2f",
+    )
+    ray_model_choice: ObserverRayModel = sh_col4.selectbox(
+        "Observer Camera Model",
+        options=["local_angle", "impact_parameter"],
+        index=0,
+        help="local_angle uses Synge's exact static orthonormal tetrad mapping.",
+    )
+
+    try:
+        shadow_res = run_cached_shadow_image(
+            M=mass_M,
+            r_obs=default_obs_r,
+            width=int(img_width),
+            height=int(img_height),
+            fov_rad=math.radians(fov_deg),
+            ray_model=ray_model_choice,
+            phi_max=phi_max,
+            rtol=max(rtol, 1e-10),
+            atol=max(atol, 1e-12),
+            method=method,
+        )
+
+        sm1, sm2, sm3, sm4 = st.columns(4)
+        sm1.metric("Captured Pixels (Shadow)", f"{shadow_res.num_captured}")
+        sm2.metric("Escaped Pixels", f"{shadow_res.num_escaped}")
+        sm3.metric("Unresolved Pixels", f"{shadow_res.num_unresolved}")
+        sm4.metric(
+            "Est. b_shadow vs. 3√3 M",
+            f"{shadow_res.estimated_b_crit_from_grid:.4f} / {shadow_res.b_shadow:.4f}"
+            if shadow_res.estimated_b_crit_from_grid is not None
+            else f"N/A / {shadow_res.b_shadow:.4f}",
+        )
+
+        for swarn in shadow_res.warnings:
+            st.warning(f"**Shadow Engine Notice:** {swarn}")
+
+        sp1, sp2 = st.columns(2)
+        with sp1:
+            fig_shadow, _ = plot_black_hole_shadow(shadow_res, show_reference_radii=True)
+            st.pyplot(fig_shadow)
+            plt.close(fig_shadow)
+        with sp2:
+            fig_prof, _ = plot_shadow_radial_profile(shadow_res)
+            st.pyplot(fig_prof)
+            plt.close(fig_prof)
+
+    except (ValueError, TypeError) as exc:
+        st.error(f"**Invalid Shadow Imaging Configuration:** {exc}")
+
     # Governing equations & conventions
     with st.expander(
-        "Governing Equations, Reference Scales & Limitations of Weak-Field Approximation",
+        "Governing Equations, Reference Scales & Limitations",
         expanded=True,
     ):
         st.markdown(
             r"""
             #### 1. Schwarzschild Metric & Reference Scales ($G = c = 1$)
-            In geometric units where $G = c = 1$, mass $M$, radius $r$, and impact parameter $b = L/E$ all carry dimensions of length:
+            In geometric units where $G = c = 1$, mass $M$, radius $r$, and impact parameter $b = L/E$ carry dimensions of length ($GM/c^2$ in SI units):
             $$ds^2 = -\left(1 - \frac{2M}{r}\right) dt^2 + \left(1 - \frac{2M}{r}\right)^{-1} dr^2 + r^2\left(d\theta^2 + \sin^2\theta\, d\phi^2\right)$$
-            - **Event Horizon (Schwarzschild Radius):** $r_s = 2M$
-            - **Photon Sphere (Unstable Circular Null Orbit):** $r_{\mathrm{ph}} = 3M$
-            - **Critical Impact Parameter:** $b_{\mathrm{crit}} = 3\sqrt{3}M \approx 5.196152\,M$
+            - **Schwarzschild Radius (Event Horizon):** $r_s = \frac{2GM}{c^2} = 2M$
+            - **Photon Sphere Radius:** $r_{\mathrm{ph}} = \frac{3GM}{c^2} = 3M$
+            - **Apparent Shadow Radius (Distant Observer):** $b_{\mathrm{shadow}} = b_{\mathrm{crit}} = \frac{3\sqrt{3}GM}{c^2} = 3\sqrt{3}M \approx 5.196152\,M$
 
-            #### 2. Equatorial Null-Geodesic Equations ($\theta = \pi/2, u = 1/r$)
-            $$\frac{d^2u}{d\phi^2} = -u + 3Mu^2, \qquad \left(\frac{du}{d\phi}\right)^2 = \frac{1}{b^2} - u^2 + 2Mu^3$$
-
-            #### 3. Gravitational Deflection Angle & Limitations of the Weak-Field Approximation
-            For an escaping photon ($b > b_{\mathrm{crit}}$) with cumulative unwrapped azimuthal sweep $\Delta\phi$, the net gravitational deflection angle is:
-            $$\alpha = \Delta\phi - \pi$$
-            In the asymptotic weak-field regime ($b \gg b_{\mathrm{crit}}$), expanding the exact deflection integral in powers of $M/b$ gives:
-            $$\alpha_{\mathrm{weak}}(b) = \frac{4M}{b} + \frac{15\pi}{4}\left(\frac{M}{b}\right)^2 + \mathcal{O}\!\left(\left(\frac{M}{b}\right)^3\right)$$
-            **Why the Weak-Field Approximation Fails Near $b_{\mathrm{crit}}$:**
-            - As $b \to b_{\mathrm{crit}}^+$, photons approach the unstable photon sphere at $r_{\mathrm{ph}} = 3M$ and can wind around the black hole multiple times ($\alpha > 2\pi$), causing $\alpha(b)$ to diverge logarithmically while $4M/b$ remains bounded at $4/(3\sqrt{3}) \approx 0.770\text{ rad}$.
-            - For $b \le b_{\mathrm{crit}}$, incoming photons cross $r = 3M$ and are captured into the event horizon ($r_s = 2M$), so no scattering deflection angle exists.
+            #### 2. Why the Apparent Shadow ($3\sqrt{3}M$) Is Larger Than the Photon Sphere ($3M$)
+            A light ray skimming the photon sphere at $r_{\mathrm{ph}} = 3M$ has conserved impact parameter
+            $b_{\mathrm{crit}} = r_{\mathrm{ph}} / \sqrt{1 - 2M/r_{\mathrm{ph}}} = 3M / \sqrt{1/3} = 3\sqrt{3}M$.
+            Gravitational light bending magnifies the cross-section of the photon sphere on a distant observer's sky from $3M$ to $3\sqrt{3}M$.
             """
         )
 
