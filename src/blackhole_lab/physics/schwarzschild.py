@@ -405,3 +405,44 @@ def second_order_weak_field_deflection(M: NumericScalar, b: NumericScalar) -> fl
     if not math.isfinite(alpha):
         raise ValueError(f"Second-order deflection angle overflowed for M={mass}, b={b_val}.")
     return alpha
+
+
+def shadow_angular_radius(r_obs: NumericScalar, M: NumericScalar) -> float:
+    """Compute the exact angular radius psi_crit of the Schwarzschild shadow for a static observer.
+
+    In a static observer's local orthonormal frame at r_obs >= r_ph = 3M, a critical light ray
+    with b = b_crit = 3 * sqrt(3) * M subtends an angle psi_crit with the inward radial axis
+    given by Synge's formula:
+
+        sin(psi_crit) = (b_crit / r_obs) * sqrt(1 - 2M / r_obs)
+
+    For r_obs -> infinity, psi_crit -> b_crit / r_obs. At r_obs = 3M, psi_crit = pi / 2.
+
+    Parameters
+    ----------
+    r_obs : NumericScalar
+        Static observer radial coordinate (must satisfy r_obs >= 3M) [L].
+    M : NumericScalar
+        Black hole mass parameter (M > 0) [L].
+
+    Returns
+    -------
+    float
+        Shadow angular radius psi_crit in radians (in (0, pi/2]).
+
+    Raises
+    ------
+    ValueError
+        If r_obs < 3M (inside the photon sphere where the shadow exceeds a hemisphere)
+        or inputs are invalid.
+    """
+    scales = reference_scales(M)
+    r_val = validate_radius(r_obs, scales.M, require_exterior=True)
+    if r_val < scales.r_ph * (1.0 - 1e-15):
+        raise ValueError(
+            f"Observer radius r_obs = {r_val} must be >= photon sphere radius "
+            f"r_ph = 3M = {scales.r_ph} for a forward-hemisphere shadow angular radius."
+        )
+    f_obs = metric_coefficient_f(r_val, scales.M, require_exterior=True)
+    sin_psi = min(1.0, (scales.b_crit / r_val) * math.sqrt(f_obs))
+    return math.asin(sin_psi)
