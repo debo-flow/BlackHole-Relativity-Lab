@@ -72,7 +72,7 @@ from blackhole_lab.visualization.plots import (
     split_trajectory_segments,
 )
 
-__version__ = "0.3.0"
+__version__ = "3.0.0"
 
 __all__ = [
     "__version__",
