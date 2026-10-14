@@ -1,4 +1,4 @@
-"""Focused tests for strong-field lensing trajectory classification and visualization."""
+"""Focused tests for strong-field lensing and black hole shadow visualization."""
 
 from __future__ import annotations
 
@@ -9,15 +9,18 @@ import pytest
 
 from blackhole_lab.numerics.geodesics import GeodesicConfig, solve_photon_geodesic
 from blackhole_lab.numerics.lensing import PhotonFate, calculate_deflection_angle
+from blackhole_lab.numerics.shadow import ShadowGridConfig, trace_black_hole_shadow
 from blackhole_lab.physics.schwarzschild import critical_impact_parameter
 from blackhole_lab.visualization.plots import (
     LensingRegime,
     classify_lensing_regime,
+    plot_black_hole_shadow,
     plot_cartesian_trajectory,
     plot_deflection_curve,
     plot_deflection_error_curve,
     plot_lensing_comparison,
     plot_radius_vs_phi,
+    plot_shadow_radial_profile,
     simulate_lensing_bundle,
     split_trajectory_segments,
 )
@@ -47,7 +50,6 @@ def test_split_trajectory_segments_never_draws_captured_or_unresolved_as_escapin
     M = 1.0
     b_crit = critical_impact_parameter(M)
 
-    # 1. Escaped trajectory (b > b_crit): has both incoming and outgoing segments + periapsis
     cfg_esc = GeodesicConfig(M=M, r0=20.0, b=1.6 * b_crit, outer_radius=30.0)
     res_esc = solve_photon_geodesic(cfg_esc)
     seg_esc = split_trajectory_segments(res_esc)
@@ -58,11 +60,9 @@ def test_split_trajectory_segments_never_draws_captured_or_unresolved_as_escapin
     assert seg_esc.periapsis_point is not None
     assert seg_esc.periapsis_radius is not None
     assert seg_esc.periapsis_radius > 3.0 * M
-    # Incoming end and outgoing start meet at periapsis
     assert np.isclose(seg_esc.incoming_x[-1], seg_esc.outgoing_x[0])
     assert np.isclose(seg_esc.incoming_y[-1], seg_esc.outgoing_y[0])
 
-    # 2. Captured trajectory (b < b_crit): outgoing segment must be strictly empty
     cfg_cap = GeodesicConfig(M=M, r0=20.0, b=0.75 * b_crit)
     res_cap = solve_photon_geodesic(cfg_cap)
     seg_cap = split_trajectory_segments(res_cap)
@@ -74,7 +74,6 @@ def test_split_trajectory_segments_never_draws_captured_or_unresolved_as_escapin
     assert seg_cap.outgoing_y.size == 0
     assert seg_cap.periapsis_point is None
 
-    # 3. Unresolved trajectory (stopped at small phi_max): outgoing segment must be empty
     cfg_unres = GeodesicConfig(M=M, r0=20.0, b=1.5 * b_crit, phi_max=0.2)
     res_unres = solve_photon_geodesic(cfg_unres)
     seg_unres = split_trajectory_segments(res_unres)
@@ -99,19 +98,16 @@ def test_simulate_lensing_bundle_and_comparison_plots() -> None:
     assert fates[0] == PhotonFate.CAPTURED
     assert all(f == PhotonFate.ESCAPED for f in fates[1:])
 
-    # Multi-trajectory comparison plot
     fig_comp, ax_comp = plot_lensing_comparison(bundle)
     assert ax_comp.get_aspect() in ("equal", 1.0)
     assert "Coordinate-Space" in ax_comp.get_title()
     assert "Not a Literal Photograph" in ax_comp.get_title()
     plt.close(fig_comp)
 
-    # Deflection vs impact parameter plot
     fig_def, ax_def = plot_deflection_curve(bundle)
     assert "Deflection" in ax_def.get_title()
     plt.close(fig_def)
 
-    # Error vs impact parameter plot
     fig_err, ax_err = plot_deflection_error_curve(bundle)
     assert "Error" in ax_err.get_title()
     plt.close(fig_err)
@@ -134,10 +130,33 @@ def test_single_trajectory_plots_and_near_critical_annotation() -> None:
     plt.close(fig_rad)
 
 
+def test_black_hole_shadow_and_radial_profile_plots() -> None:
+    """Verify plot_black_hole_shadow and plot_shadow_radial_profile render all reference scales."""
+    shadow_res = trace_black_hole_shadow(
+        ShadowGridConfig(M=1.0, r_obs=30.0, width=15, height=15)
+    )
+    fig_sh, ax_sh = plot_black_hole_shadow(shadow_res, show_reference_radii=True)
+    assert ax_sh.get_aspect() in ("equal", 1.0)
+    assert "Shadow" in ax_sh.get_title()
+    # Verify 3 reference circles (b_shadow = 3*sqrt(3)*M, r_ph = 3M, r_s = 2M) are drawn
+    assert len(ax_sh.patches) == 3
+    plt.close(fig_sh)
+
+    fig_pr, ax_pr = plot_shadow_radial_profile(shadow_res)
+    assert "Characteristic Scales" in ax_pr.get_title()
+    plt.close(fig_pr)
+
+
 def test_visualization_invalid_input_handling() -> None:
     """Verify visualization functions reject invalid types, empty sequences, and mismatched M."""
     with pytest.raises(TypeError):
         plot_cartesian_trajectory("invalid")  # type: ignore[arg-type]
+
+    with pytest.raises(TypeError):
+        plot_black_hole_shadow("invalid")  # type: ignore[arg-type]
+
+    with pytest.raises(TypeError):
+        plot_shadow_radial_profile("invalid")  # type: ignore[arg-type]
 
     with pytest.raises(ValueError, match="non-empty"):
         plot_lensing_comparison([])
