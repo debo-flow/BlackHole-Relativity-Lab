@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "blackhole-lab"
-version = "0.1.0"
-description = "Milestone 1: Schwarzschild Spacetime & Equatorial Photon Geodesics Engine"
+version = "0.2.0"
+description = "Schwarzschild Spacetime, Photon Geodesics & Gravitational Light Deflection Engine"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -17,6 +17,7 @@ keywords = [
     "schwarzschild",
     "black-hole",
     "null-geodesics",
+    "gravitational-lensing",
     "scientific-computing",
 ]
 classifiers = [
@@ -49,13 +50,13 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = [".", "src"]
 addopts = "-ra -q"
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-src = ["src", "tests", "examples"]
+src = [".", "src", "tests", "examples"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "N"]
