@@ -1,8 +1,8 @@
 """Streamlit interactive laboratory for BlackHole-Relativity-Lab (Milestones 1, 2 & 3).
 
 Preserves all Milestone 1 equatorial photon geodesic features and Milestone 2
-gravitational lensing features while adding the Milestone 3 Black Hole Shadow &
-Photon Sphere Imaging section.
+gravitational lensing features while implementing the Milestone 3 Interactive
+Black Hole Shadow & Photon Sphere Imaging Dashboard.
 
 Run locally with:
     streamlit run app.py
@@ -164,6 +164,7 @@ def run_cached_shadow_image(
         rtol=rtol,
         atol=atol,
         method=method,
+        deduplicate_symmetric_rays=True,
     )
     return trace_black_hole_shadow(cfg)
 
@@ -308,6 +309,7 @@ def main() -> None:
         max_value=8.0,
         value=3.0,
         step=0.5,
+        help="Trajectories exceeding this azimuthal limit are marked UNRESOLVED.",
     )
     method = st.sidebar.selectbox(
         "ODE Solver Method",
@@ -355,58 +357,56 @@ def main() -> None:
         st.stop()
 
     # Milestone 1 Status & Diagnostics Panel
-    st.markdown("### Integration Status & First-Integral Diagnostics")
-    status_labels = {
-        SolverStatus.COMPLETED: (
-            "COMPLETED INTEGRATION (Reached Outer Radial Boundary)",
-            "success",
-        ),
-        SolverStatus.CAPTURE_BOUNDARY: (
-            "CAPTURE-BOUNDARY TERMINATION (Reached Capture Radius near Event Horizon)",
-            "warning",
-        ),
-        SolverStatus.INTEGRATION_LIMIT: (
-            "INTEGRATION-LIMIT TERMINATION (Reached Maximum Angle φ_max)",
-            "info",
-        ),
-        SolverStatus.SOLVER_FAILURE: (
-            "SOLVER FAILURE (Numerical Error or Invalid Domain)",
-            "error",
-        ),
-    }
-    label_text, alert_kind = status_labels[result.status]
+    with st.expander("Single Trajectory Integration Status & Diagnostics", expanded=False):
+        status_labels = {
+            SolverStatus.COMPLETED: (
+                "COMPLETED INTEGRATION (Reached Outer Radial Boundary)",
+                "success",
+            ),
+            SolverStatus.CAPTURE_BOUNDARY: (
+                "CAPTURE-BOUNDARY TERMINATION (Reached Capture Radius near Event Horizon)",
+                "warning",
+            ),
+            SolverStatus.INTEGRATION_LIMIT: (
+                "INTEGRATION-LIMIT TERMINATION (Reached Maximum Angle φ_max)",
+                "info",
+            ),
+            SolverStatus.SOLVER_FAILURE: (
+                "SOLVER FAILURE (Numerical Error or Invalid Domain)",
+                "error",
+            ),
+        }
+        label_text, alert_kind = status_labels[result.status]
 
-    if alert_kind == "success":
-        st.success(f"**Status:** {label_text}\n\n{result.solver_message}")
-    elif alert_kind == "warning":
-        st.warning(f"**Status:** {label_text}\n\n{result.solver_message}")
-    elif alert_kind == "info":
-        st.info(f"**Status:** {label_text}\n\n{result.solver_message}")
-    else:
-        st.error(f"**Status:** {label_text}\n\n{result.solver_message}")
+        if alert_kind == "success":
+            st.success(f"**Status:** {label_text}\n\n{result.solver_message}")
+        elif alert_kind == "warning":
+            st.warning(f"**Status:** {label_text}\n\n{result.solver_message}")
+        elif alert_kind == "info":
+            st.info(f"**Status:** {label_text}\n\n{result.solver_message}")
+        else:
+            st.error(f"**Status:** {label_text}\n\n{result.solver_message}")
 
-    diag = result.diagnostics
-    dcol1, dcol2, dcol3, dcol4 = st.columns(4)
-    dcol1.metric("Integration Points", f"{diag.num_points}")
-    dcol2.metric("Termination Reason", f"{diag.termination_reason.value}")
-    dcol3.metric("Max |First-Integral Residual|", f"{diag.max_abs_residual:.3e}")
-    dcol4.metric("Tolerances (rtol / atol)", f"{diag.rtol:.0e} / {diag.atol:.0e}")
+        diag = result.diagnostics
+        dcol1, dcol2, dcol3, dcol4 = st.columns(4)
+        dcol1.metric("Integration Points", f"{diag.num_points}")
+        dcol2.metric("Termination Reason", f"{diag.termination_reason.value}")
+        dcol3.metric("Max |First-Integral Residual|", f"{diag.max_abs_residual:.3e}")
+        dcol4.metric("Tolerances (rtol / atol)", f"{diag.rtol:.0e} / {diag.atol:.0e}")
 
-    for warn_msg in diag.warnings:
-        st.warning(f"**Solver Diagnostic Notice:** {warn_msg}")
+        for warn_msg in diag.warnings:
+            st.warning(f"**Solver Diagnostic Notice:** {warn_msg}")
 
-    # Numerical Trajectory Plots
-    st.markdown("### Numerical Trajectory Plots (Coordinate-Space Visualization)")
-    pcol1, pcol2 = st.columns(2)
-    with pcol1:
-        fig_cart, _ = plot_cartesian_trajectory(deflection_res)
-        st.pyplot(fig_cart)
-        plt.close(fig_cart)
-
-    with pcol2:
-        fig_rad, _ = plot_radius_vs_phi(deflection_res)
-        st.pyplot(fig_rad)
-        plt.close(fig_rad)
+        # Numerical Trajectory Plots
+        pcol1, pcol2 = st.columns(2)
+        with pcol1:
+            fig_cart, _ = plot_cartesian_trajectory(deflection_res)
+            st.pyplot(fig_cart)
+            plt.close(fig_cart)
+        with pcol2:
+            fig_rad, _ = plot_radius_vs_phi(deflection_res)
+            st.pyplot(fig_rad)
+            plt.close(fig_rad)
 
     st.divider()
 
@@ -432,10 +432,7 @@ def main() -> None:
             f"{deflection_res.numerical_deflection:.6f} rad "
             f"({math.degrees(deflection_res.numerical_deflection):.3f}°)",
         )
-        mcol2.metric(
-            "Absolute Error |α_num - 4M/b|",
-            f"{deflection_res.absolute_error:.4e} rad",
-        )
+        mcol2.metric("Absolute Error |α_num - 4M/b|", f"{deflection_res.absolute_error:.4e} rad")
         mcol3.metric(
             "Relative Error vs. 4M/b",
             f"{100.0 * float(deflection_res.relative_error):.3f}%"
@@ -448,151 +445,86 @@ def main() -> None:
             if deflection_res.convergence_indicator is not None
             else "N/A",
         )
-
-        fcol1, fcol2, fcol3, fcol4 = st.columns(4)
-        fcol1.metric(
-            "Periapsis Radius r_p",
-            f"{deflection_res.periapsis_radius:.4f} ({deflection_res.periapsis_radius / mass_M:.4f} M)"
-            if deflection_res.periapsis_radius is not None
-            else "N/A",
-        )
-        fcol2.metric(
-            "Finite-Domain Sweep Δφ_finite - π",
-            f"{deflection_res.finite_radius_deflection:.6f} rad"
-            if deflection_res.finite_radius_deflection is not None
-            else "N/A",
-        )
-        fcol3.metric(
-            "Asymptotic Tail Correction",
-            f"{deflection_res.asymptotic_tail_correction:.4e} rad"
-            if deflection_res.asymptotic_tail_correction is not None
-            else "N/A",
-        )
-        fcol4.metric("Relativistic Winding Number n", f"{deflection_res.winding_number}")
     else:
         st.info(
             f"**No Scattering Deflection Angle Reported:** Photon fate is "
             f"**{deflection_res.fate.value.upper()}**. Scattering deflection angles are "
-            "defined only for photons that scatter at a periapsis $r_p > 3M$ and escape to "
-            "the outer boundary."
+            "defined only for photons that scatter at a periapsis $r_p > 3M$ and escape."
         )
 
     for lens_warn in deflection_res.warnings:
         st.warning(f"**Lensing Regime Notice:** {lens_warn}")
 
-    # Multi-Impact-Parameter Sweep
-    st.markdown("### Multi-Parameter Lensing Sweep (Weak-Field vs. Strong-Field)")
-    scol1, scol2, scol3, scol4 = st.columns(4)
-    b_min_over_m = scol1.number_input(
-        "Sweep minimum (b_min / M)",
-        min_value=1.0,
-        max_value=50.0,
-        value=4.0,
-        step=0.5,
-        format="%.2f",
-    )
-    max_allowed_b_over_m = max(10.0, float(0.85 * (r0 / mass_M)))
-    default_b_max = min(25.0, max_allowed_b_over_m)
-    b_max_over_m = scol2.number_input(
-        "Sweep maximum (b_max / M)",
-        min_value=5.5,
-        max_value=float(max_allowed_b_over_m),
-        value=float(max(6.0, default_b_max)),
-        step=1.0,
-        format="%.2f",
-    )
-    sweep_points = scol3.slider(
-        "Number of sweep trajectories",
-        min_value=5,
-        max_value=25,
-        value=10,
-        step=1,
-    )
-    include_near_crit = scol4.checkbox(
-        "Sample near b_crit = 3√3 M",
-        value=True,
-    )
-
-    try:
-        b_grid_tuple = build_sweep_b_over_m_grid(
-            b_min_over_M=b_min_over_m,
-            b_max_over_M=b_max_over_m,
-            num_points=sweep_points,
-            include_near_critical_cluster=include_near_crit,
+    with st.expander("Multi-Parameter Lensing Sweep (Weak-Field vs. Strong-Field)", expanded=False):
+        scol1, scol2, scol3, scol4 = st.columns(4)
+        b_min_over_m = scol1.number_input(
+            "Sweep min (b_min/M)", min_value=1.0, max_value=50.0, value=4.0, step=0.5
         )
-        sweep_results, sweep_errors = run_cached_lensing_sweep(
-            M=mass_M,
-            r0=r0,
-            b_over_M_values=b_grid_tuple,
-            phi_max=phi_max,
-            rtol=rtol,
-            atol=atol,
-            method=method,
-            apply_asymptotic_correction=apply_asymptotic,
+        max_allowed_b_over_m = max(10.0, float(0.85 * (r0 / mass_M)))
+        default_b_max = min(25.0, max_allowed_b_over_m)
+        b_max_over_m = scol2.number_input(
+            "Sweep max (b_max/M)",
+            min_value=5.5,
+            max_value=float(max_allowed_b_over_m),
+            value=float(max(6.0, default_b_max)),
+            step=1.0,
         )
-    except (ValueError, TypeError) as exc:
-        st.error(f"**Invalid Sweep Configuration:** {exc}")
-        sweep_results, sweep_errors = [], []
+        sweep_points = scol3.slider("Sweep trajectories", min_value=5, max_value=25, value=10)
+        include_near_crit = scol4.checkbox("Sample near b_crit", value=True)
 
-    for err_msg in sweep_errors:
-        st.warning(f"**Skipped Sweep Ray:** {err_msg}")
+        try:
+            b_grid_tuple = build_sweep_b_over_m_grid(
+                b_min_over_m, b_max_over_m, sweep_points, include_near_crit
+            )
+            sweep_results, sweep_errors = run_cached_lensing_sweep(
+                M=mass_M, r0=r0, b_over_M_values=b_grid_tuple, phi_max=phi_max,
+                rtol=rtol, atol=atol, method=method, apply_asymptotic_correction=apply_asymptotic,
+            )
+            for err_msg in sweep_errors:
+                st.warning(f"Skipped Sweep Ray: {err_msg}")
 
-    if sweep_results:
-        if len(sweep_results) > 7:
-            indices = np.linspace(0, len(sweep_results) - 1, 7, dtype=int)
-            bundle_subset = [sweep_results[int(i)] for i in indices]
-        else:
-            bundle_subset = sweep_results
+            if sweep_results:
+                bundle_subset = sweep_results if len(sweep_results) <= 7 else [
+                    sweep_results[int(i)] for i in np.linspace(0, len(sweep_results) - 1, 7, dtype=int)
+                ]
+                bcol1, bcol2 = st.columns(2)
+                with bcol1:
+                    fig_bundle, _ = plot_lensing_comparison(bundle_subset)
+                    st.pyplot(fig_bundle)
+                    plt.close(fig_bundle)
+                with bcol2:
+                    fig_def_curve, _ = plot_deflection_curve(sweep_results)
+                    st.pyplot(fig_def_curve)
+                    plt.close(fig_def_curve)
 
-        bcol1, bcol2 = st.columns(2)
-        with bcol1:
-            fig_bundle, _ = plot_lensing_comparison(bundle_subset)
-            st.pyplot(fig_bundle)
-            plt.close(fig_bundle)
-
-        with bcol2:
-            fig_def_curve, _ = plot_deflection_curve(sweep_results)
-            st.pyplot(fig_def_curve)
-            plt.close(fig_def_curve)
-
-        fig_err_curve, _ = plot_deflection_error_curve(sweep_results)
-        st.pyplot(fig_err_curve)
-        plt.close(fig_err_curve)
+                fig_err_curve, _ = plot_deflection_error_curve(sweep_results)
+                st.pyplot(fig_err_curve)
+                plt.close(fig_err_curve)
+        except (ValueError, TypeError) as exc:
+            st.error(f"Sweep Configuration Error: {exc}")
 
     st.divider()
 
     # =========================================================================
-    # MILESTONE 3: BLACK HOLE SHADOW & PHOTON SPHERE IMAGING LABORATORY
+    # MILESTONE 3: BLACK HOLE SHADOW & PHOTON SPHERE IMAGING DASHBOARD
     # =========================================================================
-    st.markdown("## Black Hole Shadow & Photon Sphere Imaging Engine")
+    st.markdown("## Interactive Black Hole Shadow Imaging Dashboard")
     st.markdown(
         """
         Simulate the two-dimensional observer image plane for a static observer at distance
-        $r_{\\mathrm{obs}} > 3M$ and compare the three characteristic gravitational scales:
-        - **Schwarzschild Event Horizon:** $r_s = 2GM/c^2 = 2M$
-        - **Photon Sphere Radius:** $r_{\\mathrm{ph}} = 3GM/c^2 = 3M$
-        - **Apparent Shadow Radius (Distant Observer):** $b_{\\mathrm{shadow}} = 3\\sqrt{3}\\,GM/c^2 \\approx 5.19615\\,M$
+        $r_{\\mathrm{obs}}$ (using the configured solver tolerances and limits). The engine traces 
+        a grid of rays backward into Schwarzschild spacetime to generate the apparent shadow mask.
         """
     )
 
     sh_col1, sh_col2, sh_col3, sh_col4 = st.columns(4)
-    img_width = sh_col1.slider(
-        "Image Width (px)",
-        min_value=15,
-        max_value=121,
-        value=51,
-        step=2,
-    )
-    img_height = sh_col2.slider(
-        "Image Height (px)",
-        min_value=15,
-        max_value=121,
-        value=51,
-        step=2,
-    )
+    img_width = sh_col1.slider("Image Width (px)", min_value=15, max_value=255, value=45, step=2)
+    img_height = sh_col2.slider("Image Height (px)", min_value=15, max_value=255, value=45, step=2)
+
     default_obs_r = max(float(r0), float(3.2 * mass_M))
     psi_crit_default = shadow_angular_radius(default_obs_r, mass_M)
     default_fov_deg = min(math.degrees(3.2 * psi_crit_default), 100.0)
+    
     fov_deg = sh_col3.number_input(
         "Field of View (degrees)",
         min_value=1.0,
@@ -605,37 +537,78 @@ def main() -> None:
         "Observer Camera Model",
         options=["local_angle", "impact_parameter"],
         index=0,
-        help="local_angle uses Synge's exact static orthonormal tetrad mapping.",
+        help="local_angle applies Synge's exact static orthonormal tetrad mapping for finite distances.",
     )
 
-    try:
-        shadow_res = run_cached_shadow_image(
-            M=mass_M,
-            r_obs=default_obs_r,
-            width=int(img_width),
-            height=int(img_height),
-            fov_rad=math.radians(fov_deg),
-            ray_model=ray_model_choice,
-            phi_max=phi_max,
-            rtol=max(rtol, 1e-10),
-            atol=max(atol, 1e-12),
-            method=method,
+    total_pixels = img_width * img_height
+    if total_pixels > 2500:
+        st.warning(
+            f"**Performance Notice:** You requested a {img_width}x{img_height} grid "
+            f"({total_pixels} total rays). Ray-tracing high resolutions dynamically may take "
+            "several seconds on a standard laptop. Consider using a smaller grid (e.g., 45x45) "
+            "for rapid exploratory tweaks."
         )
 
-        sm1, sm2, sm3, sm4 = st.columns(4)
-        sm1.metric("Captured Pixels (Shadow)", f"{shadow_res.num_captured}")
-        sm2.metric("Escaped Pixels", f"{shadow_res.num_escaped}")
-        sm3.metric("Unresolved Pixels", f"{shadow_res.num_unresolved}")
-        sm4.metric(
-            "Est. b_shadow vs. 3√3 M",
-            f"{shadow_res.estimated_b_crit_from_grid:.4f} / {shadow_res.b_shadow:.4f}"
-            if shadow_res.estimated_b_crit_from_grid is not None
-            else f"N/A / {shadow_res.b_shadow:.4f}",
+    try:
+        # Trace the shadow grid using cached background execution
+        with st.spinner(f"Tracing {total_pixels} rays through Schwarzschild spacetime..."):
+            shadow_res = run_cached_shadow_image(
+                M=mass_M,
+                r_obs=default_obs_r,
+                width=int(img_width),
+                height=int(img_height),
+                fov_rad=math.radians(fov_deg),
+                ray_model=ray_model_choice,
+                phi_max=phi_max,
+                rtol=max(rtol, 1e-9),  # Keep minimum floor to preserve UI responsiveness
+                atol=max(atol, 1e-11),
+                method=method,
+            )
+
+        # 1. Ray Statistics
+        st.markdown("#### Simulation Ray Statistics")
+        stat1, stat2, stat3, stat4, stat5 = st.columns(5)
+        stat1.metric("Total Image Pixels", f"{total_pixels}")
+        stat2.metric("Captured (Shadow)", f"{shadow_res.num_captured}")
+        stat3.metric("Escaped", f"{shadow_res.num_escaped}")
+        stat4.metric("Unresolved", f"{shadow_res.num_unresolved}")
+        stat5.metric(
+            "Unique ODE Solves", 
+            f"{shadow_res.unique_rays_traced}",
+            help="Symmetric pixels with identical impact parameters reuse a single ODE integration.",
         )
 
         for swarn in shadow_res.warnings:
             st.warning(f"**Shadow Engine Notice:** {swarn}")
 
+        # 2. Boundary Validation
+        st.markdown("#### Shadow Boundary Validation")
+        if shadow_res.num_captured > 0 and shadow_res.num_escaped > 0:
+            max_b_cap = float(np.max(shadow_res.impact_parameter_grid[shadow_res.capture_mask]))
+            min_b_esc = float(np.min(shadow_res.impact_parameter_grid[shadow_res.escaped_mask]))
+            b_gap = min_b_esc - max_b_cap
+            is_adequately_resolved = b_gap < (0.2 * mass_M)
+            
+            b_val_col1, b_val_col2, b_val_col3 = st.columns(3)
+            b_val_col1.metric("Analytical b_shadow", f"{shadow_res.b_shadow:.4f}")
+            if is_adequately_resolved:
+                b_val_col2.metric("Numerical Grid Estimate", f"{shadow_res.estimated_b_crit_from_grid:.4f}")
+            else:
+                b_val_col2.metric("Numerical Grid Estimate", "Insufficient Resolution")
+            
+            b_val_col3.metric("Grid Boundary Uncertainty (Gap)", f"{b_gap:.4f}")
+            
+            if not is_adequately_resolved:
+                st.info(
+                    f"**Resolution Note:** The gap between the outermost captured ray ($b = {max_b_cap:.4f}$) "
+                    f"and the innermost escaped ray ($b = {min_b_esc:.4f}$) is {b_gap:.4f}. "
+                    "This boundary is not adequately resolved to report a precise numerical estimate. "
+                    "Increase image resolution or decrease Field of View to tighten the bracket."
+                )
+        else:
+            st.info("Boundary validation requires at least one captured ray and one escaped ray in the FOV.")
+
+        # 3. Plots
         sp1, sp2 = st.columns(2)
         with sp1:
             fig_shadow, _ = plot_black_hole_shadow(shadow_res, show_reference_radii=True)
@@ -649,27 +622,30 @@ def main() -> None:
     except (ValueError, TypeError) as exc:
         st.error(f"**Invalid Shadow Imaging Configuration:** {exc}")
 
-    # Governing equations & conventions
-    with st.expander(
-        "Governing Equations, Reference Scales & Limitations",
-        expanded=True,
-    ):
+    # Physical Explanation Expander
+    with st.expander("Physics Assumptions: The Distant-Observer Approximation vs. Finite Distance"):
         st.markdown(
             r"""
-            #### 1. Schwarzschild Metric & Reference Scales ($G = c = 1$)
-            In geometric units where $G = c = 1$, mass $M$, radius $r$, and impact parameter $b = L/E$ carry dimensions of length ($GM/c^2$ in SI units):
-            $$ds^2 = -\left(1 - \frac{2M}{r}\right) dt^2 + \left(1 - \frac{2M}{r}\right)^{-1} dr^2 + r^2\left(d\theta^2 + \sin^2\theta\, d\phi^2\right)$$
-            - **Schwarzschild Radius (Event Horizon):** $r_s = \frac{2GM}{c^2} = 2M$
-            - **Photon Sphere Radius:** $r_{\mathrm{ph}} = \frac{3GM}{c^2} = 3M$
-            - **Apparent Shadow Radius (Distant Observer):** $b_{\mathrm{shadow}} = b_{\mathrm{crit}} = \frac{3\sqrt{3}GM}{c^2} = 3\sqrt{3}M \approx 5.196152\,M$
+            #### Why the Apparent Shadow ($3\sqrt{3}M$) Is Larger Than the Photon Sphere ($3M$)
+            A light ray skimming the unstable photon sphere at $r_{\mathrm{ph}} = 3M$ has a conserved impact parameter 
+            $b_{\mathrm{shadow}} = r_{\mathrm{ph}} / \sqrt{1 - 2M/r_{\mathrm{ph}}} = 3M / \sqrt{1/3} = 3\sqrt{3}M \approx 5.196M$. 
+            Because photons originating near the photon sphere undergo severe gravitational bending as they climb out 
+            of the potential well, the apparent cross-section of the shadow on a distant observer's sky is magnified 
+            from $3M$ to $3\sqrt{3}M$.
 
-            #### 2. Why the Apparent Shadow ($3\sqrt{3}M$) Is Larger Than the Photon Sphere ($3M$)
-            A light ray skimming the photon sphere at $r_{\mathrm{ph}} = 3M$ has conserved impact parameter
-            $b_{\mathrm{crit}} = r_{\mathrm{ph}} / \sqrt{1 - 2M/r_{\mathrm{ph}}} = 3M / \sqrt{1/3} = 3\sqrt{3}M$.
-            Gravitational light bending magnifies the cross-section of the photon sphere on a distant observer's sky from $3M$ to $3\sqrt{3}M$.
+            #### Asymptotic vs. Finite-Distance Viewing Geometry
+            The analytical reference $b_{\mathrm{shadow}} = 3\sqrt{3}M$ is strictly a coordinate impact parameter.
+            For an idealized observer located at infinity ($r \to \infty$), the angular radius of the shadow 
+            on the sky is simply $\theta \approx b_{\mathrm{shadow}} / r_{\mathrm{obs}}$.
+
+            However, for an observer at a **finite distance** $r_{\mathrm{obs}}$, the local gravitational curvature 
+            alters the viewing angle. Rather than blindly applying the asymptotic formula, our `local_angle` camera 
+            model correctly utilizes **Synge's exact finite-distance formula** for a static orthonormal tetrad:
+            $$\sin(\psi_{\mathrm{crit}}) = \frac{3\sqrt{3}M}{r_{\mathrm{obs}}} \sqrt{1 - \frac{2M}{r_{\mathrm{obs}}}}$$
+            The numerical engine correctly maps grid pixels back to $b$-space using this exact inverse relationship, 
+            ensuring that the finite-distance curvature effects are correctly integrated.
             """
         )
-
 
 if __name__ == "__main__":
     main()
