@@ -1,4 +1,4 @@
-"""Tests for Milestone 3 Part 1: Black hole shadow physics, critical boundary & ray-tracing."""
+"""Tests for Black hole shadow physics, critical boundary & 2D shadow imaging engine."""
 
 from __future__ import annotations
 
@@ -10,6 +10,9 @@ import pytest
 
 from blackhole_lab.numerics.lensing import PhotonFate
 from blackhole_lab.numerics.shadow import (
+    CLASSIFICATION_CODE_CAPTURED,
+    CLASSIFICATION_CODE_ESCAPED,
+    CLASSIFICATION_CODE_UNRESOLVED,
     ShadowGridConfig,
     find_critical_impact_parameter,
     sky_angle_to_impact_parameter,
@@ -24,7 +27,7 @@ from blackhole_lab.physics.schwarzschild import (
 
 
 def test_schwarzschild_reference_scales_and_synge_shadow_angle() -> None:
-    """Verify r_s = 2M, r_ph = 3M, b_crit = 3*sqrt(3)*M, and Synge's shadow angular radius."""
+    """Verify r_s = 2M, r_ph = 3M, b_shadow = 3*sqrt(3)*M, and Synge's shadow angular radius."""
     M = 2.0
     assert math.isclose(schwarzschild_radius(M), 4.0, rel_tol=1e-15)
     assert math.isclose(photon_sphere_radius(M), 6.0, rel_tol=1e-15)
@@ -73,15 +76,15 @@ def test_find_critical_impact_parameter_handles_unresolved_rays_safely() -> None
         b_low=3.0,
         b_high=8.0,
         tolerance=1e-8,
-        phi_max=1.6 * math.pi,  # Intentionally small so multi-loop near-critical rays hit phi_max
+        phi_max=1.6 * math.pi,
     )
     assert res.unresolved_encountered is True
     assert res.converged is False
     assert any("UNRESOLVED" in w for w in res.warnings)
 
 
-def test_shadow_ray_tracing_dimensions_classification_and_symmetry() -> None:
-    """Verify 2D shadow mask dimensions, ray classification, and 8-fold Schwarzschild symmetry."""
+def test_shadow_ray_tracing_dimensions_classification_finiteness_and_symmetry() -> None:
+    """Verify 2D shadow mask dimensions, valid classification values, finiteness, and symmetry."""
     cfg = ShadowGridConfig(
         M=1.0,
         r_obs=25.0,
@@ -94,9 +97,42 @@ def test_shadow_ray_tracing_dimensions_classification_and_symmetry() -> None:
     assert res.alpha_y.shape == (21,)
     assert res.theta_sky_grid.shape == (21, 21)
     assert res.impact_parameter_grid.shape == (21, 21)
+    assert res.bx_grid.shape == (21, 21)
+    assert res.by_grid.shape == (21, 21)
+    assert res.classification_map.shape == (21, 21)
     assert res.capture_mask.shape == (21, 21)
     assert res.escaped_mask.shape == (21, 21)
     assert res.unresolved_mask.shape == (21, 21)
+
+    # All numerical coordinate and impact-parameter outputs must be finite
+    assert np.all(np.isfinite(res.alpha_x))
+    assert np.all(np.isfinite(res.alpha_y))
+    assert np.all(np.isfinite(res.theta_sky_grid))
+    assert np.all(np.isfinite(res.impact_parameter_grid))
+    assert np.all(np.isfinite(res.bx_grid))
+    assert np.all(np.isfinite(res.by_grid))
+    np.testing.assert_allclose(
+        np.hypot(res.bx_grid, res.by_grid),
+        res.impact_parameter_grid,
+        rtol=1e-13,
+        atol=1e-13,
+    )
+
+    # Distinct characteristic scales: r_s = 2M < r_ph = 3M < b_shadow = 3*sqrt(3)*M
+    assert math.isclose(res.r_s, 2.0, rel_tol=1e-15)
+    assert math.isclose(res.r_ph, 3.0, rel_tol=1e-15)
+    assert math.isclose(res.b_shadow, 3.0 * math.sqrt(3.0), rel_tol=1e-15)
+    assert res.r_s < res.r_ph < res.b_shadow
+
+    # Valid classification values in fate_grid and classification_map
+    allowed_fates = {PhotonFate.CAPTURED, PhotonFate.ESCAPED, PhotonFate.UNRESOLVED}
+    assert set(res.fate_grid.ravel()).issubset(allowed_fates)
+    allowed_codes = {
+        CLASSIFICATION_CODE_CAPTURED,
+        CLASSIFICATION_CODE_ESCAPED,
+        CLASSIFICATION_CODE_UNRESOLVED,
+    }
+    assert set(np.unique(res.classification_map)).issubset(allowed_codes)
 
     # Pixel counts must partition the entire grid with zero overlap
     assert res.num_captured + res.num_escaped + res.num_unresolved == 21 * 21
@@ -107,14 +143,16 @@ def test_shadow_ray_tracing_dimensions_classification_and_symmetry() -> None:
     # Central pixel (10, 10) is on the optical axis (b = 0) and must be CAPTURED
     assert res.impact_parameter_grid[10, 10] == 0.0
     assert res.capture_mask[10, 10] is np.True_
+    assert res.classification_map[10, 10] == CLASSIFICATION_CODE_CAPTURED
     # Corner pixel (0, 0) is outside the shadow and must be ESCAPED
     assert res.escaped_mask[0, 0] is np.True_
+    assert res.classification_map[0, 0] == CLASSIFICATION_CODE_ESCAPED
 
     # Exact 8-fold symmetry on a centered square grid
     assert np.array_equal(res.capture_mask, np.flipud(res.capture_mask))
     assert np.array_equal(res.capture_mask, np.fliplr(res.capture_mask))
     assert np.array_equal(res.capture_mask, res.capture_mask.T)
-    assert np.array_equal(res.escaped_mask, res.escaped_mask.T)
+    assert np.array_equal(res.classification_map, res.classification_map.T)
 
     # Grid-estimated b_crit must bracket the analytical value within 1 grid pixel spacing
     assert res.estimated_b_crit_from_grid is not None
@@ -122,12 +160,13 @@ def test_shadow_ray_tracing_dimensions_classification_and_symmetry() -> None:
     assert abs(res.estimated_b_crit_from_grid - res.b_crit_analytical) <= max_pixel_db
 
 
-def test_rectangular_grid_and_deduplication_equivalence() -> None:
-    """Verify non-square (ny, nx) resolution and equivalence with full per-pixel integration."""
+def test_explicit_width_height_and_deduplication_equivalence() -> None:
+    """Verify explicit width/height configuration and equivalence with full integration."""
     cfg_dedup = ShadowGridConfig(
         M=1.0,
         r_obs=20.0,
-        resolution=(9, 11),
+        width=11,
+        height=9,
         ray_model="impact_parameter",
         deduplicate_symmetric_rays=True,
     )
@@ -142,20 +181,22 @@ def test_rectangular_grid_and_deduplication_equivalence() -> None:
     res_dedup = trace_black_hole_shadow(cfg_dedup)
     res_full = trace_black_hole_shadow(cfg_full)
 
+    assert cfg_dedup.image_width == 11
+    assert cfg_dedup.image_height == 9
     assert res_dedup.capture_mask.shape == (9, 11)
     assert res_dedup.unique_rays_traced < res_full.unique_rays_traced
     assert np.array_equal(res_dedup.capture_mask, res_full.capture_mask)
     assert np.array_equal(res_dedup.escaped_mask, res_full.escaped_mask)
     assert np.array_equal(res_dedup.unresolved_mask, res_full.unresolved_mask)
+    assert np.array_equal(res_dedup.classification_map, res_full.classification_map)
 
 
 def test_unresolved_pixels_are_never_converted_to_captured() -> None:
     """Verify that unfinished or failed integrations go to unresolved_mask, never capture_mask."""
-    # 1. Small phi_max so rays cannot reach capture or outer boundary
     cfg_short = ShadowGridConfig(
         M=1.0,
         r_obs=30.0,
-        resolution=6,  # even resolution so no b=0 on-axis pixel
+        resolution=6,
         phi_max=0.05,
     )
     res_short = trace_black_hole_shadow(cfg_short)
@@ -165,9 +206,9 @@ def test_unresolved_pixels_are_never_converted_to_captured() -> None:
     assert res_short.num_escaped == 0
     assert not np.any(res_short.capture_mask)
     assert np.all(res_short.unresolved_mask)
+    assert np.all(res_short.classification_map == CLASSIFICATION_CODE_UNRESOLVED)
     assert any("UNRESOLVED" in w for w in res_short.warnings)
 
-    # 2. Simulated solver failure on every off-axis geodesic
     class DummyFailedSol:
         status = -1
         message = "Mock solver step failure"
@@ -184,12 +225,15 @@ def test_unresolved_pixels_are_never_converted_to_captured() -> None:
 
 
 def test_shadow_invalid_inputs_rejected() -> None:
-    """Verify invalid observer radii, resolutions, fields of view, and brackets raise errors."""
+    """Verify invalid observer radii, resolutions, width/height pairs, and FOVs raise errors."""
     with pytest.raises(ValueError, match="photon sphere"):
         ShadowGridConfig(M=1.0, r_obs=2.8)
 
-    with pytest.raises(ValueError, match="resolution"):
+    with pytest.raises(ValueError, match="dimensions"):
         ShadowGridConfig(M=1.0, r_obs=20.0, resolution=2)
+
+    with pytest.raises(ValueError, match="Both width and height"):
+        ShadowGridConfig(M=1.0, r_obs=20.0, width=21)
 
     with pytest.raises(ValueError, match="fov_rad"):
         ShadowGridConfig(M=1.0, r_obs=20.0, fov_rad=-0.5)
