@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "blackhole-lab"
-version = "0.2.0"
-description = "Schwarzschild Spacetime, Photon Geodesics & Gravitational Light Deflection Engine"
+version = "3.0.0"
+description = "Version 3.0.0 — Black Hole Shadow & Photon Sphere Imaging Laboratory"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -18,10 +18,11 @@ keywords = [
     "black-hole",
     "null-geodesics",
     "gravitational-lensing",
+    "black-hole-shadow",
     "scientific-computing",
 ]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
