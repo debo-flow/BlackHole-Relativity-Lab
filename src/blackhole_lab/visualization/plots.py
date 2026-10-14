@@ -34,10 +34,9 @@ from numpy.typing import NDArray
 from blackhole_lab.numerics.geodesics import (
     GeodesicConfig,
     GeodesicResult,
-    solve_photon_geodesic,
 )
 from blackhole_lab.numerics.lensing import (
-     NEAR_CRITICAL_B_OVER_BCRIT,
+    NEAR_CRITICAL_B_OVER_BCRIT,
     WEAK_FIELD_MIN_B_OVER_BCRIT,
     DeflectionResult,
     PhotonFate,
@@ -319,7 +318,6 @@ def _draw_black_hole_references(
     show_b_crit: bool = True,
 ) -> None:
     """Draw the black hole interior, event horizon (2M), photon sphere (3M), and b_crit."""
-    # Black hole interior & event horizon r_s = 2M
     horizon_patch = Circle(
         (0.0, 0.0),
         radius=r_s,
@@ -331,7 +329,6 @@ def _draw_black_hole_references(
     )
     ax.add_patch(horizon_patch)
 
-    # Photon sphere r_ph = 3M
     photon_sphere_patch = Circle(
         (0.0, 0.0),
         radius=r_ph,
@@ -344,7 +341,6 @@ def _draw_black_hole_references(
     )
     ax.add_patch(photon_sphere_patch)
 
-    # Critical impact parameter reference circle b_crit = 3*sqrt(3)*M
     if show_b_crit:
         b_crit_patch = Circle(
             (0.0, 0.0),
@@ -353,7 +349,10 @@ def _draw_black_hole_references(
             edgecolor="#7570b3",
             linestyle=":",
             linewidth=1.3,
-            label=f"Critical impact parameter ($b_{{\\mathrm{{crit}}}} = 3\\sqrt{{3}}M = {b_crit:.2f}$)",
+            label=(
+                f"Critical impact parameter "
+                f"($b_{{\\mathrm{{crit}}}} = 3\\sqrt{{3}}M = {b_crit:.2f}$)"
+            ),
             zorder=4,
         )
         ax.add_patch(b_crit_patch)
@@ -719,7 +718,6 @@ def plot_deflection_curve(
     captured = [r for r in results if r.fate == PhotonFate.CAPTURED]
     unresolved = [r for r in results if r.fate == PhotonFate.UNRESOLVED]
 
-    # Critical impact parameter vertical line
     ax.axvline(
         b_crit / mass,
         color="#d95f02",
@@ -754,7 +752,7 @@ def plot_deflection_curve(
             alpha_num,
             color="#1f78b4",
             marker="o",
-             markersize=5.0,
+            markersize=5.0,
             linewidth=1.8,
             label=r"Numerical deflection $\alpha_{\mathrm{num}}(b)$ (ESCAPED)",
         )
@@ -788,6 +786,127 @@ def plot_deflection_curve(
     ax.set_title("Schwarzschild Gravitational Light Deflection vs. Impact Parameter")
     ax.grid(True, linestyle=":", alpha=0.6)
     ax.legend(loc="upper right", fontsize=8.2, framealpha=0.92)
+    fig.tight_layout()
+    return fig, ax
+
+
+def plot_deflection_error_curve(
+    results: Sequence[DeflectionResult],
+    ax: Axes | None = None,
+) -> tuple[Figure, Axes]:
+    """Plot weak-field approximation error and numerical convergence indicator vs. b / M.
+
+    Displays on a logarithmic vertical scale for escaped trajectories:
+    1. Absolute weak-field discrepancy |alpha_num - 4M/b| [rad].
+    2. Second-order post-Newtonian discrepancy |alpha_num - alpha_2PN| [rad].
+    3. Numerical solver convergence indicator (if evaluated) [rad].
+
+    Parameters
+    ----------
+    results : Sequence[DeflectionResult]
+        Non-empty sequence of ``DeflectionResult`` instances sharing mass M.
+    ax : matplotlib.axes.Axes | None, optional
+        Existing axes to draw onto. If None, creates a new Figure and Axes.
+
+    Returns
+    -------
+    tuple[Figure, Axes]
+        Matplotlib Figure and Axes objects.
+    """
+    if isinstance(results, (str, bytes)) or len(results) == 0:
+        raise ValueError("results must be a non-empty sequence of DeflectionResult objects.")
+    for item in results:
+        if not isinstance(item, DeflectionResult):
+            raise TypeError(
+                f"All elements must be DeflectionResult instances; got {type(item).__name__}."
+            )
+
+    mass = validate_mass(results[0].M)
+    b_crit = results[0].b_crit
+    for item in results[1:]:
+        if not np.isclose(item.M, mass, rtol=1e-12, atol=0.0):
+            raise ValueError("All DeflectionResult items must share the same black hole mass M.")
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(6.8, 4.6), dpi=120)
+    else:
+        fig = ax.get_figure()  # type: ignore[assignment]
+
+    escaped = [
+        r
+        for r in results
+        if r.fate == PhotonFate.ESCAPED
+        and r.numerical_deflection is not None
+        and r.absolute_error is not None
+    ]
+
+    ax.axvline(
+        b_crit / mass,
+        color="#d95f02",
+        linestyle="--",
+        linewidth=1.5,
+        label=r"Critical threshold $b_{\mathrm{crit}} / M = 3\sqrt{3}$",
+    )
+
+    if escaped:
+        escaped_sorted = sorted(escaped, key=lambda r: r.b)
+        b_over_m = np.array([r.b / mass for r in escaped_sorted], dtype=np.float64)
+        abs_err_1pn = np.array(
+            [max(float(r.absolute_error), 1e-16) for r in escaped_sorted],
+            dtype=np.float64,
+        )
+        abs_err_2pn = np.array(
+            [
+                max(abs(float(r.numerical_deflection) - r.analytical_post_newtonian_2), 1e-16)
+                for r in escaped_sorted
+            ],
+            dtype=np.float64,
+        )
+
+        ax.semilogy(
+            b_over_m,
+            abs_err_1pn,
+            color="#e31a1c",
+            marker="o",
+            markersize=5.0,
+            linewidth=1.8,
+            label=r"Weak-field error $|\alpha_{\mathrm{num}} - 4M/b|$ [rad]",
+        )
+        ax.semilogy(
+            b_over_m,
+            abs_err_2pn,
+            color="#1f78b4",
+            marker="s",
+            markersize=4.5,
+            linestyle="--",
+            linewidth=1.5,
+            label=r"2PN residual $|\alpha_{\mathrm{num}} - \alpha_{\mathrm{2PN}}|$ [rad]",
+        )
+
+        conv_pts = [
+            (r.b / mass, max(float(r.convergence_indicator), 1e-16))
+            for r in escaped_sorted
+            if r.convergence_indicator is not None
+        ]
+        if conv_pts:
+            b_conv = np.array([pt[0] for pt in conv_pts], dtype=np.float64)
+            c_vals = np.array([pt[1] for pt in conv_pts], dtype=np.float64)
+            ax.semilogy(
+                b_conv,
+                c_vals,
+                color="#6a3d9a",
+                marker="^",
+                markersize=4.5,
+                linestyle=":",
+                linewidth=1.4,
+                label="Numerical solver convergence indicator [rad]",
+            )
+
+    ax.set_xlabel(r"Dimensionless impact parameter $b / M$ [geometric units]")
+    ax.set_ylabel("Absolute Angular Error / Discrepancy [rad]")
+    ax.set_title(r"Analytical Approximation Error & Numerical Convergence vs. $b / M$")
+    ax.grid(True, which="both", linestyle=":", alpha=0.6)
+    ax.legend(loc="upper right", fontsize=8.0, framealpha=0.92)
     fig.tight_layout()
     return fig, ax
 
