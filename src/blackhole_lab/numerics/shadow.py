@@ -1,51 +1,46 @@
 """Schwarzschild black hole shadow physics, critical boundary finder, and ray-tracing engine.
 
-Observer Setup & Ray Initialization Geometry
+Unit Conventions & Physical Reference Scales
 --------------------------------------------
-Consider a static observer located at Schwarzschild radial coordinate r_obs > r_ph = 3M
-looking directly toward the center of a non-rotating Schwarzschild black hole of mass M.
+Internally, all calculations use geometric units (G = c = 1) in which mass M, radial
+coordinate r, and impact parameter b carry dimensions of length [L]. To convert any
+length scale to SI units for a black hole of physical mass M_phys, multiply by GM_phys/c^2:
 
-In the observer's local static orthonormal tetrad:
-    e_(t) = (1 - 2M / r_obs)^(-1/2) partial_t
-    e_(r) = (1 - 2M / r_obs)^(1/2)  partial_r
-    e_(theta) = r_obs^(-1)          partial_theta
-    e_(phi)   = (r_obs sin(theta))^(-1) partial_phi
+1. Schwarzschild radius (event horizon):
+       r_s = 2M                  (physical: r_s = 2 G M_phys / c^2)
+2. Photon sphere radius (unstable circular photon orbit):
+       r_ph = 3M                 (physical: r_ph = 3 G M_phys / c^2)
+3. Apparent shadow impact-parameter radius for a distant observer:
+       b_shadow = b_crit = 3*sqrt(3)*M  (physical: b_shadow = 3*sqrt(3) G M_phys / c^2)
 
-a light ray arriving at the observer (or traced backward from the observer toward the
-black hole using time-reversal invariance of the static Schwarzschild metric) makes an
-angle psi_obs with the inward radial direction -e_(r). The conserved impact parameter
-b = L / E is related to psi_obs and r_obs by the exact local tetrad formula:
+Because outgoing photons from r_ph = 3M experience gravitational redshift and light
+bending as they climb out of the potential well, the apparent shadow radius b_shadow =
+r_ph / sqrt(1 - 2M / r_ph) = 3*sqrt(3)*M ≈ 5.19615 M is larger than both r_s = 2M and
+r_ph = 3M.
 
-    sin(psi_obs) = (b / r_obs) * sqrt(1 - 2M / r_obs)
-    ==>  b(psi_obs) = r_obs * sin(psi_obs) / sqrt(1 - 2M / r_obs)
+Observer Setup & Image-Plane Ray Mapping
+----------------------------------------
+Consider a static observer at radial coordinate r_obs > r_ph = 3M looking toward the
+center of the Schwarzschild black hole. Each pixel (i, j) on the 2D image plane has
+angular sky coordinates (alpha_x, alpha_y) in [-FOV/2, +FOV/2]^2 (radians), polar sky
+angle theta_sky = sqrt(alpha_x^2 + alpha_y^2), and screen azimuth varphi = atan2(alpha_y, alpha_x).
 
-Each pixel (i, j) on the 2D image plane has angular sky coordinates (alpha_x, alpha_y)
-in [-FOV/2, +FOV/2]^2 (radians), corresponding to polar sky angle from the optical axis:
+In the observer's local static orthonormal tetrad, a ray at viewing angle psi_obs = theta_sky
+relative to the inward radial axis has conserved impact parameter:
 
-    theta_sky = sqrt(alpha_x^2 + alpha_y^2)
+    b(theta_sky) = r_obs * sin(theta_sky) / sqrt(1 - 2M / r_obs)    ("local_angle" model)
 
-and azimuthal screen angle varphi_screen = atan2(alpha_y, alpha_x). We support two
-documented ray-initialization conventions (``ObserverRayModel``):
-1. ``"local_angle"`` (Default):
-   Identifies the pixel's sky angle theta_sky with the local orthonormal viewing angle
-   psi_obs = theta_sky in [0, pi/2], yielding b = r_obs * sin(theta_sky) / sqrt(1 - 2M/r_obs).
-2. ``"impact_parameter"``:
-   Uses the small-angle / asymptotic Bardeen impact-parameter plane convention where
-   b = r_obs * theta_sky (valid when b < b_max(r_obs) = r_obs / sqrt(1 - 2M/r_obs)).
+or, in the asymptotic small-angle impact-parameter plane convention:
 
-Because Schwarzschild spacetime is spherically symmetric, every ray lies in the invariant
-plane spanned by the optical axis and varphi_screen. Within that plane, the radial motion
-u(phi) = 1 / r(phi) obeys the exact equatorial null-geodesic equation d^2u/dphi^2 = -u + 3Mu^2
-solved by ``solve_photon_geodesic``.
+    b(theta_sky) = r_obs * theta_sky                               ("impact_parameter" model)
 
-Purely Radial On-Axis Ray (b = 0)
----------------------------------
-When a pixel lies exactly on the optical axis (alpha_x = 0, alpha_y = 0 ==> b = 0),
-azimuthal angle phi is constant (dphi = 0), so the phi-parameterized Binet equation
-cannot be used. Instead, an exact radial null geodesic (L = 0) satisfies
-(dr / dlambda)^2 = E^2 in Schwarzschild coordinates, moving monotonically inward from
-r_obs to the capture boundary r_capture in finite affine parameter Delta_lambda =
-(r_obs - r_capture) / E > 0, and is classified as ``PhotonFate.CAPTURED``.
+The 2D apparent impact-parameter coordinates on the observer's sky plane are:
+
+    b_x = b * cos(varphi),    b_y = b * sin(varphi)
+
+Each ray is traced through Schwarzschild spacetime using ``solve_photon_geodesic`` and
+classified into exactly one category (`CAPTURED`, `ESCAPED`, or `UNRESOLVED`). Unresolved
+rays are never converted into captured shadow pixels.
 """
 
 from __future__ import annotations
@@ -76,6 +71,11 @@ from blackhole_lab.physics.schwarzschild import (
 )
 
 ObserverRayModel = Literal["local_angle", "impact_parameter"]
+
+# Integer codes for 2D classification maps
+CLASSIFICATION_CODE_CAPTURED: int = 1
+CLASSIFICATION_CODE_ESCAPED: int = 0
+CLASSIFICATION_CODE_UNRESOLVED: int = -1
 
 
 @dataclass(frozen=True)
@@ -133,26 +133,29 @@ class CriticalBoundaryResult:
 
 @dataclass(frozen=True)
 class ShadowGridConfig:
-    """Configuration for the 2D Schwarzschild black hole shadow ray-tracing engine.
+    """Configuration for the 2D Schwarzschild black hole shadow imaging engine.
 
     Parameters
     ----------
     M : float, default 1.0
         Black hole mass parameter (M > 0) in geometric units (G = c = 1) [L].
     r_obs : float, default 30.0
-        Static observer radial coordinate (must satisfy r_obs > 3M) [L].
+        Static observer radial distance (must satisfy r_obs > 3M) [L].
     resolution : int | tuple[int, int], default 41
-        Image-plane pixel resolution. If an int N is given, produces an N x N square
-        grid; if a tuple (ny, nx) is given, produces ny rows by nx columns.
-        Must satisfy 3 <= ny, nx <= 512.
+        Image-plane pixel resolution when ``width`` and ``height`` are not specified.
+        If an int N is given, produces an N x N grid; if (ny, nx) is given, produces
+        ny rows (height) by nx columns (width).
+    width : int | None, default None
+        Optional explicit horizontal image width (number of columns nx, in [3, 512]).
+        Must be specified together with ``height``.
+    height : int | None, default None
+        Optional explicit vertical image height (number of rows ny, in [3, 512]).
+        Must be specified together with ``width``.
     fov_rad : float | None, default None
-        Full angular field of view of the square image plane in radians [1].
-        If None, defaults to 3.2 * shadow_angular_radius(r_obs, M) so the black hole
-        shadow is well-centered with surrounding escaped-ray margin.
+        Full angular field of view of the image plane in radians [1].
+        If None, defaults to 3.2 * shadow_angular_radius(r_obs, M).
     ray_model : ObserverRayModel, default "local_angle"
-        Observer camera mapping convention:
-        - ``"local_angle"``: exact local static orthonormal tetrad angle psi_obs = theta_sky.
-        - ``"impact_parameter"``: asymptotic impact-parameter plane b = r_obs * theta_sky.
+        Observer camera mapping convention ("local_angle" or "impact_parameter").
     phi_max : float, default 6 * pi
         Maximum azimuthal integration interval for each ray [rad].
     capture_radius_factor : float, default 1.001
@@ -176,6 +179,8 @@ class ShadowGridConfig:
     M: float = 1.0
     r_obs: float = 30.0
     resolution: int | tuple[int, int] = 41
+    width: int | None = None
+    height: int | None = None
     fov_rad: float | None = None
     ray_model: ObserverRayModel = "local_angle"
     phi_max: float = 6.0 * math.pi
@@ -192,14 +197,14 @@ class ShadowGridConfig:
         r_obs_val = validate_radius(self.r_obs, scales.M, require_exterior=True)
         if r_obs_val <= scales.r_ph:
             raise ValueError(
-                f"Observer radius r_obs = {r_obs_val} must be strictly outside the "
+                f"Observer distance r_obs = {r_obs_val} must be strictly outside the "
                 f"photon sphere r_ph = 3M = {scales.r_ph}."
             )
 
         ny, nx = self.grid_shape
         if not (3 <= ny <= 512 and 3 <= nx <= 512):
             raise ValueError(
-                f"Grid resolution dimensions must be in [3, 512]; got ({ny}, {nx})."
+                f"Grid dimensions (height={ny}, width={nx}) must be in [3, 512]."
             )
 
         if self.ray_model not in ("local_angle", "impact_parameter"):
@@ -250,7 +255,22 @@ class ShadowGridConfig:
 
     @property
     def grid_shape(self) -> tuple[int, int]:
-        """Return (ny, nx) pixel dimensions of the 2D image plane."""
+        """Return (ny, nx) = (height, width) pixel dimensions of the 2D image plane."""
+        if (self.width is None) != (self.height is None):
+            raise ValueError(
+                "Both width and height must be specified together, or leave both as None "
+                "to use resolution."
+            )
+        if self.width is not None and self.height is not None:
+            if (
+                isinstance(self.width, bool)
+                or isinstance(self.height, bool)
+                or not isinstance(self.width, int)
+                or not isinstance(self.height, int)
+            ):
+                raise TypeError("width and height must be integers.")
+            return (int(self.height), int(self.width))
+
         if isinstance(self.resolution, bool):
             raise TypeError("resolution must be an int or tuple[int, int], not bool.")
         if isinstance(self.resolution, int):
@@ -267,6 +287,16 @@ class ShadowGridConfig:
             "resolution must be an int or a 2-tuple of ints (ny, nx); "
             f"got {self.resolution!r}."
         )
+
+    @property
+    def image_width(self) -> int:
+        """Horizontal pixel count nx."""
+        return self.grid_shape[1]
+
+    @property
+    def image_height(self) -> int:
+        """Vertical pixel count ny."""
+        return self.grid_shape[0]
 
     @property
     def effective_fov_rad(self) -> float:
@@ -293,8 +323,15 @@ class ShadowRayTracingResult:
         2D angular separation from optical axis sqrt(alpha_x^2 + alpha_y^2) of shape (ny, nx) [rad].
     impact_parameter_grid : NDArray[np.float64]
         2D impact parameter b(i, j) assigned to each pixel of shape (ny, nx) [L].
+    bx_grid : NDArray[np.float64]
+        2D horizontal apparent impact-parameter coordinate b_x(i, j) of shape (ny, nx) [L].
+    by_grid : NDArray[np.float64]
+        2D vertical apparent impact-parameter coordinate b_y(i, j) of shape (ny, nx) [L].
     fate_grid : NDArray[np.object_]
         2D array of ``PhotonFate`` classifications of shape (ny, nx).
+    classification_map : NDArray[np.int8]
+        2D integer classification array of shape (ny, nx) with values strictly in
+        ``{1 (CAPTURED), 0 (ESCAPED), -1 (UNRESOLVED)}``.
     capture_mask : NDArray[np.bool_]
         2D boolean shadow mask of shape (ny, nx): True ONLY where fate == CAPTURED.
         Unresolved pixels are strictly False in ``capture_mask``.
@@ -310,8 +347,15 @@ class ShadowRayTracingResult:
         Total number of unresolved pixels.
     unique_rays_traced : int
         Number of ODE trajectory integrations executed.
+    r_s : float
+        Schwarzschild event-horizon radius r_s = 2M (physical: 2GM/c^2) [L].
+    r_ph : float
+        Photon-sphere radius r_ph = 3M (physical: 3GM/c^2) [L].
+    b_shadow : float
+        Apparent shadow impact-parameter radius b_shadow = 3*sqrt(3)*M
+        (physical: 3*sqrt(3) GM/c^2) [L].
     b_crit_analytical : float
-        Exact critical impact parameter 3 * sqrt(3) * M [L].
+        Alias for ``b_shadow`` = 3 * sqrt(3) * M [L].
     shadow_angular_radius_analytical : float
         Exact local-observer shadow angular radius psi_crit [rad].
     estimated_b_crit_from_grid : float | None
@@ -327,7 +371,10 @@ class ShadowRayTracingResult:
     alpha_y: NDArray[np.float64]
     theta_sky_grid: NDArray[np.float64]
     impact_parameter_grid: NDArray[np.float64]
+    bx_grid: NDArray[np.float64]
+    by_grid: NDArray[np.float64]
     fate_grid: NDArray[np.object_]
+    classification_map: NDArray[np.int8]
     capture_mask: NDArray[np.bool_]
     escaped_mask: NDArray[np.bool_]
     unresolved_mask: NDArray[np.bool_]
@@ -335,6 +382,9 @@ class ShadowRayTracingResult:
     num_escaped: int
     num_unresolved: int
     unique_rays_traced: int
+    r_s: float
+    r_ph: float
+    b_shadow: float
     b_crit_analytical: float
     shadow_angular_radius_analytical: float
     estimated_b_crit_from_grid: float | None
@@ -412,8 +462,6 @@ def _trace_single_impact_parameter(
       ``classify_photon_fate``.
     """
     if b_val == 0.0:
-        # Purely radial ingoing null geodesic (L = 0, dphi = 0): dr/dlambda = -E < 0.
-        # Travels straight along the optical axis into r_capture in finite affine parameter.
         r_cap = config.capture_radius_factor * (2.0 * config.M)
         if config.r_obs > r_cap:
             return PhotonFate.CAPTURED
@@ -603,7 +651,8 @@ def trace_black_hole_shadow(config: ShadowGridConfig) -> ShadowRayTracingResult:
     Returns
     -------
     ShadowRayTracingResult
-        Complete 2D grids, boolean masks, pixel counts, and analytical/numerical shadow scales.
+        Complete 2D grids, boolean masks, integer classification map, pixel counts,
+        and analytical/numerical shadow scales.
     """
     if not isinstance(config, ShadowGridConfig):
         raise TypeError(
@@ -628,10 +677,16 @@ def trace_black_hole_shadow(config: ShadowGridConfig) -> ShadowRayTracingResult:
         ray_model=config.ray_model,
     )
 
+    # Compute 2D apparent impact-parameter coordinates (b_x, b_y) with safe zero handling
+    bx_grid = np.zeros_like(b_grid, dtype=np.float64)
+    by_grid = np.zeros_like(b_grid, dtype=np.float64)
+    nonzero = theta_sky_grid > 0.0
+    bx_grid[nonzero] = b_grid[nonzero] * (ax_grid[nonzero] / theta_sky_grid[nonzero])
+    by_grid[nonzero] = b_grid[nonzero] * (ay_grid[nonzero] / theta_sky_grid[nonzero])
+
     fate_grid = np.empty((ny, nx), dtype=object)
 
     if config.deduplicate_symmetric_rays:
-        # Round to 14 significant digits (~machine precision) to group symmetric pixels
         b_rounded = np.round(b_grid, decimals=13)
         unique_b_vals, inverse_indices = np.unique(b_rounded, return_inverse=True)
         unique_fates = np.empty(unique_b_vals.size, dtype=object)
@@ -650,6 +705,12 @@ def trace_black_hole_shadow(config: ShadowGridConfig) -> ShadowRayTracingResult:
     capture_mask = np.equal(fate_grid, PhotonFate.CAPTURED)
     escaped_mask = np.equal(fate_grid, PhotonFate.ESCAPED)
     unresolved_mask = np.equal(fate_grid, PhotonFate.UNRESOLVED)
+
+    classification_map = np.full(
+        (ny, nx), CLASSIFICATION_CODE_UNRESOLVED, dtype=np.int8
+    )
+    classification_map[escaped_mask] = CLASSIFICATION_CODE_ESCAPED
+    classification_map[capture_mask] = CLASSIFICATION_CODE_CAPTURED
 
     num_cap = int(np.sum(capture_mask))
     num_esc = int(np.sum(escaped_mask))
@@ -688,7 +749,10 @@ def trace_black_hole_shadow(config: ShadowGridConfig) -> ShadowRayTracingResult:
         alpha_y=alpha_y,
         theta_sky_grid=theta_sky_grid,
         impact_parameter_grid=b_grid,
+        bx_grid=bx_grid,
+        by_grid=by_grid,
         fate_grid=fate_grid,
+        classification_map=classification_map,
         capture_mask=capture_mask,
         escaped_mask=escaped_mask,
         unresolved_mask=unresolved_mask,
@@ -696,6 +760,9 @@ def trace_black_hole_shadow(config: ShadowGridConfig) -> ShadowRayTracingResult:
         num_escaped=num_esc,
         num_unresolved=num_unres,
         unique_rays_traced=rays_traced,
+        r_s=scales.r_s,
+        r_ph=scales.r_ph,
+        b_shadow=scales.b_crit,
         b_crit_analytical=scales.b_crit,
         shadow_angular_radius_analytical=psi_crit_analytical,
         estimated_b_crit_from_grid=est_b_crit,
