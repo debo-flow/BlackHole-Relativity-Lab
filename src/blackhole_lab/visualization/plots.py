@@ -1,4 +1,4 @@
-"""Scientific visualization routines for equatorial Schwarzschild photon trajectories.
+"""Scientific visualization routines for Schwarzschild trajectories, lensing, and shadows.
 
 Visualization Conventions & Scientific Honesty
 ----------------------------------------------
@@ -8,14 +8,13 @@ Visualization Conventions & Scientific Honesty
    coordinate-space trajectory diagrams, NOT synthetic camera photographs, isometric
    spatial embeddings, or radiative-transfer accretion disk images.
 2. Physical Reference Scales:
-   Plots explicitly display the black hole interior (r < 2M), event horizon (r_s = 2M),
-   photon sphere (r_ph = 3M), and critical impact parameter radius (b_crit = 3*sqrt(3)*M).
+   Plots explicitly distinguish the Schwarzschild event horizon (r_s = 2GM/c^2 = 2M),
+   the photon sphere (r_ph = 3GM/c^2 = 3M), and the apparent shadow impact-parameter
+   radius for a distant observer (b_shadow = 3*sqrt(3)*GM/c^2 = 3*sqrt(3)*M).
 3. Strict Fate Separation:
-   Trajectories are classified via ``classify_photon_fate`` into ``ESCAPED``, ``CAPTURED``,
-   and ``UNRESOLVED``. Only ``ESCAPED`` photons are split at periapsis (r_min > 3M) into
-   an incoming path and an outgoing escaping path. ``CAPTURED`` and ``UNRESOLVED``
-   photons have empty outgoing arrays so a captured or unfinished trajectory can never
-   be drawn as an escaping photon.
+   Trajectories and shadow pixels are classified into ``ESCAPED``, ``CAPTURED``,
+   and ``UNRESOLVED``. Unresolved trajectories or pixels are always rendered as a
+   distinct category and are never merged into captured or escaped regions.
 """
 
 from __future__ import annotations
@@ -27,8 +26,9 @@ from enum import Enum
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.axes import Axes
+from matplotlib.colors import ListedColormap
 from matplotlib.figure import Figure
-from matplotlib.patches import Circle
+from matplotlib.patches import Circle, Patch
 from numpy.typing import NDArray
 
 from blackhole_lab.numerics.geodesics import (
@@ -42,6 +42,9 @@ from blackhole_lab.numerics.lensing import (
     PhotonFate,
     calculate_deflection_angle,
     classify_photon_fate,
+)
+from blackhole_lab.numerics.shadow import (
+    ShadowRayTracingResult,
 )
 from blackhole_lab.physics.schwarzschild import (
     _ensure_finite_scalar,
@@ -70,27 +73,6 @@ class TrajectorySegments:
     For ``PhotonFate.CAPTURED`` and ``PhotonFate.UNRESOLVED``, ``outgoing_x`` and
     ``outgoing_y`` are guaranteed to be empty 1D arrays so non-escaping photons
     are never rendered with an escaping branch.
-
-    Attributes
-    ----------
-    fate : PhotonFate
-        Classified trajectory outcome (ESCAPED, CAPTURED, or UNRESOLVED).
-    regime : LensingRegime
-        Physical impact-parameter regime based on b / b_crit.
-    incoming_x : NDArray[np.float64]
-        Cartesian x coordinates of the incoming segment [L].
-    incoming_y : NDArray[np.float64]
-        Cartesian y coordinates of the incoming segment [L].
-    outgoing_x : NDArray[np.float64]
-        Cartesian x coordinates of the outgoing escaping segment (empty if not ESCAPED) [L].
-    outgoing_y : NDArray[np.float64]
-        Cartesian y coordinates of the outgoing escaping segment (empty if not ESCAPED) [L].
-    periapsis_point : tuple[float, float] | None
-        Cartesian (x_p, y_p) coordinates of closest approach for ESCAPED trajectories.
-    periapsis_radius : float | None
-        Minimum radius r_min for ESCAPED trajectories [L].
-    has_near_critical_warning : bool
-        True if trajectory is in the near-critical regime or carries diagnostic warnings.
     """
 
     fate: PhotonFate
@@ -119,18 +101,7 @@ def _extract_geodesic_result(
 
 
 def classify_lensing_regime(b_over_b_crit: float) -> LensingRegime:
-    """Classify the gravitational lensing regime from the dimensionless ratio b / b_crit.
-
-    Parameters
-    ----------
-    b_over_b_crit : float
-        Dimensionless impact parameter ratio b / (3 * sqrt(3) * M) (must be > 0).
-
-    Returns
-    -------
-    LensingRegime
-        Classified physical regime.
-    """
+    """Classify the gravitational lensing regime from the dimensionless ratio b / b_crit."""
     ratio = _ensure_finite_scalar(b_over_b_crit, "b_over_b_crit")
     if ratio <= 0.0:
         raise ValueError(f"b_over_b_crit must be strictly positive; got {ratio}.")
@@ -148,21 +119,7 @@ def classify_lensing_regime(b_over_b_crit: float) -> LensingRegime:
 def split_trajectory_segments(
     source: GeodesicResult | DeflectionResult,
 ) -> TrajectorySegments:
-    """Split a numerical trajectory into incoming and (if escaped) outgoing segments.
-
-    Guarantees that ``CAPTURED`` and ``UNRESOLVED`` trajectories return empty outgoing
-    arrays so they can never be drawn as escaping photon paths.
-
-    Parameters
-    ----------
-    source : GeodesicResult | DeflectionResult
-        Solved photon trajectory.
-
-    Returns
-    -------
-    TrajectorySegments
-        Validated coordinate segments for plotting.
-    """
+    """Split a numerical trajectory into incoming and (if escaped) outgoing segments."""
     result = _extract_geodesic_result(source)
     fate = (
         source.fate
@@ -219,7 +176,6 @@ def split_trajectory_segments(
             has_near_critical_warning=has_warning,
         )
 
-    # Captured or unresolved: entire valid path is incoming/pre-termination; outgoing is empty
     return TrajectorySegments(
         fate=fate,
         regime=regime,
@@ -244,40 +200,7 @@ def simulate_lensing_bundle(
     atol: float = 1e-12,
     apply_asymptotic_correction: bool = True,
 ) -> list[DeflectionResult]:
-    """Simulate a bundle of photon trajectories across lensing regimes using solve_ivp.
-
-    Default ``b_factors`` (multiples of ``b_crit = 3*sqrt(3)*M``) sample:
-    - Subcritical capture (0.75 * b_crit)
-    - Near-critical strong lensing (1.005 * b_crit)
-    - Strong-field lensing (1.15 * b_crit, 1.8 * b_crit)
-    - Moderate-field lensing (3.2 * b_crit)
-    - Weak-field lensing (6.5 * b_crit)
-
-    Parameters
-    ----------
-    M : float, default 1.0
-        Black hole mass parameter (M > 0) [L].
-    r0 : float, default 25.0
-        Starting radial coordinate (must be large enough that all requested b are
-        classically allowed at r0) [L].
-    b_factors : Sequence[float]
-        Sequence of dimensionless ratios b / b_crit (must be non-empty and > 0).
-    outer_radius : float | None, optional
-        Outer radial boundary [L]. Defaults to max(1.5 * r0, 50.0 * M).
-    phi_max : float, default 8 * pi
-        Maximum azimuthal integration angle [rad].
-    rtol : float, default 1e-10
-        Relative solver tolerance.
-    atol : float, default 1e-12
-        Absolute solver tolerance.
-    apply_asymptotic_correction : bool, default True
-        Whether to include the asymptotic quadrature tail in DeflectionResult.
-
-    Returns
-    -------
-    list[DeflectionResult]
-        List of numerically integrated DeflectionResult objects.
-    """
+    """Simulate a bundle of photon trajectories across lensing regimes using solve_ivp."""
     scales = reference_scales(M)
     r0_val = validate_radius(r0, scales.M, require_exterior=True)
     if isinstance(b_factors, (str, bytes)) or len(b_factors) == 0:
@@ -366,32 +289,7 @@ def plot_cartesian_trajectory(
     show_impact_parameter: bool = True,
     split_ingoing_outgoing: bool = True,
 ) -> tuple[Figure, Axes]:
-    """Plot a photon trajectory in equatorial coordinate space x = r cos(phi), y = r sin(phi).
-
-    Explicitly separates incoming and outgoing segments for escaped photons, never
-    draws an outgoing escaping branch for captured or unresolved photons, and labels
-    the diagram as a coordinate-space projection rather than a photograph.
-
-    Parameters
-    ----------
-    source : GeodesicResult | DeflectionResult
-        Output from ``solve_photon_geodesic`` or ``calculate_deflection_angle``.
-    ax : matplotlib.axes.Axes | None, optional
-        Existing axes to draw onto. If None, creates a new Figure and Axes.
-    view_limit : float | None, optional
-        Half-width of the square plot window in units of length (M).
-    show_impact_parameter : bool, default True
-        If True, draws the critical impact parameter circle b_crit and a reference
-        circle at radius r = b (for b <= view_limit).
-    split_ingoing_outgoing : bool, default True
-        If True and the photon escaped, plots the incoming leg and outgoing leg with
-        distinct visual styles and marks the periapsis turning point.
-
-    Returns
-    -------
-    tuple[Figure, Axes]
-        Matplotlib Figure and Axes objects.
-    """
+    """Plot a photon trajectory in equatorial coordinate space x = r cos(phi), y = r sin(phi)."""
     result = _extract_geodesic_result(source)
     segments = split_trajectory_segments(source)
 
@@ -535,29 +433,7 @@ def plot_lensing_comparison(
     view_limit: float | None = None,
     show_b_crit_reference: bool = True,
 ) -> tuple[Figure, Axes]:
-    """Plot multiple photon trajectories comparing weak, moderate, strong, near-critical, and capture.
-
-    Every curve is drawn from actual numerical ODE integration output. Escaped
-    trajectories show both incoming (solid) and outgoing (dashed) paths; captured
-    and unresolved trajectories show only their incoming/pre-termination path and
-    are never rendered as escaping.
-
-    Parameters
-    ----------
-    trajectories : Sequence[GeodesicResult | DeflectionResult]
-        Non-empty sequence of solved trajectories sharing a common black hole mass M.
-    ax : matplotlib.axes.Axes | None, optional
-        Existing axes to draw onto. If None, creates a new Figure and Axes.
-    view_limit : float | None, optional
-        Half-width of the square plot window. Defaults to ``1.1 * max(r0)``.
-    show_b_crit_reference : bool, default True
-        Whether to draw the critical impact parameter circle b_crit = 3*sqrt(3)*M.
-
-    Returns
-    -------
-    tuple[Figure, Axes]
-        Matplotlib Figure and Axes objects.
-    """
+    """Plot multiple photon trajectories comparing weak, moderate, strong, near-critical, and capture."""
     if isinstance(trajectories, (str, bytes)) or len(trajectories) == 0:
         raise ValueError("trajectories must be a non-empty sequence of trajectory results.")
 
@@ -675,24 +551,7 @@ def plot_deflection_curve(
     results: Sequence[DeflectionResult],
     ax: Axes | None = None,
 ) -> tuple[Figure, Axes]:
-    """Plot numerical deflection angle alpha(b) vs. analytical weak-field 4M/b reference.
-
-    Only ``PhotonFate.ESCAPED`` trajectories have a defined scattering deflection angle
-    and are plotted on the numerical deflection curve; ``CAPTURED`` and ``UNRESOLVED``
-    impact parameters are marked along the horizontal axis for clarity.
-
-    Parameters
-    ----------
-    results : Sequence[DeflectionResult]
-        Non-empty sequence of ``DeflectionResult`` instances sharing mass M.
-    ax : matplotlib.axes.Axes | None, optional
-        Existing axes to draw onto. If None, creates a new Figure and Axes.
-
-    Returns
-    -------
-    tuple[Figure, Axes]
-        Matplotlib Figure and Axes objects.
-    """
+    """Plot numerical deflection angle alpha(b) vs. analytical weak-field 4M/b reference."""
     if isinstance(results, (str, bytes)) or len(results) == 0:
         raise ValueError("results must be a non-empty sequence of DeflectionResult objects.")
     for item in results:
@@ -794,25 +653,7 @@ def plot_deflection_error_curve(
     results: Sequence[DeflectionResult],
     ax: Axes | None = None,
 ) -> tuple[Figure, Axes]:
-    """Plot weak-field approximation error and numerical convergence indicator vs. b / M.
-
-    Displays on a logarithmic vertical scale for escaped trajectories:
-    1. Absolute weak-field discrepancy |alpha_num - 4M/b| [rad].
-    2. Second-order post-Newtonian discrepancy |alpha_num - alpha_2PN| [rad].
-    3. Numerical solver convergence indicator (if evaluated) [rad].
-
-    Parameters
-    ----------
-    results : Sequence[DeflectionResult]
-        Non-empty sequence of ``DeflectionResult`` instances sharing mass M.
-    ax : matplotlib.axes.Axes | None, optional
-        Existing axes to draw onto. If None, creates a new Figure and Axes.
-
-    Returns
-    -------
-    tuple[Figure, Axes]
-        Matplotlib Figure and Axes objects.
-    """
+    """Plot weak-field approximation error and numerical convergence indicator vs. b / M."""
     if isinstance(results, (str, bytes)) or len(results) == 0:
         raise ValueError("results must be a non-empty sequence of DeflectionResult objects.")
     for item in results:
@@ -915,20 +756,7 @@ def plot_radius_vs_phi(
     source: GeodesicResult | DeflectionResult,
     ax: Axes | None = None,
 ) -> tuple[Figure, Axes]:
-    """Plot the radial coordinate r(phi) versus azimuthal angle phi.
-
-    Parameters
-    ----------
-    source : GeodesicResult | DeflectionResult
-        Output from ``solve_photon_geodesic`` or ``calculate_deflection_angle``.
-    ax : matplotlib.axes.Axes | None, optional
-        Existing axes to draw onto. If None, creates a new Figure and Axes.
-
-    Returns
-    -------
-    tuple[Figure, Axes]
-        Matplotlib Figure and Axes objects.
-    """
+    """Plot the radial coordinate r(phi) versus azimuthal angle phi."""
     result = _extract_geodesic_result(source)
 
     if ax is None:
@@ -963,5 +791,239 @@ def plot_radius_vs_phi(
     ax.set_ylim(bottom=0.0, top=max(1.1 * result.config.r0, 1.2 * result.r_ph))
     ax.grid(True, linestyle=":", alpha=0.6)
     ax.legend(loc="best", fontsize=8.5, framealpha=0.9)
+    fig.tight_layout()
+    return fig, ax
+
+
+def plot_black_hole_shadow(
+    shadow_result: ShadowRayTracingResult,
+    ax: Axes | None = None,
+    *,
+    show_reference_radii: bool = True,
+) -> tuple[Figure, Axes]:
+    """Visualize the 2D Schwarzschild black hole shadow on the observer's image plane.
+
+    Plots the ray-traced classification map in apparent impact-parameter coordinates
+    (b_x, b_y) [in units of GM/c^2 = M], explicitly distinguishing:
+    - Captured ray region (Black Hole Shadow interior)
+    - Escaped ray region (surrounding sky)
+    - Unresolved pixels, if present (rendered in distinct amber/gold so they are
+      never conflated with captured shadow pixels)
+    - Apparent shadow boundary: b_shadow = 3*sqrt(3)*GM/c^2 = 3*sqrt(3)*M
+    - Photon sphere coordinate radius reference: r_ph = 3GM/c^2 = 3M
+    - Schwarzschild event horizon coordinate radius reference: r_s = 2GM/c^2 = 2M
+
+    Parameters
+    ----------
+    shadow_result : ShadowRayTracingResult
+        Output from ``trace_black_hole_shadow``.
+    ax : matplotlib.axes.Axes | None, optional
+        Existing axes to draw onto. If None, creates a new Figure and Axes.
+    show_reference_radii : bool, default True
+        If True, overlays the exact circles for b_shadow = 3*sqrt(3)*M, r_ph = 3M,
+        and r_s = 2M to illustrate gravitational lensing magnification of the shadow.
+
+    Returns
+    -------
+    tuple[Figure, Axes]
+        Matplotlib Figure and Axes objects.
+    """
+    if not isinstance(shadow_result, ShadowRayTracingResult):
+        raise TypeError(
+            "shadow_result must be a ShadowRayTracingResult instance; "
+            f"got {type(shadow_result).__name__}."
+        )
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(7.0, 7.0), dpi=120)
+    else:
+        fig = ax.get_figure()  # type: ignore[assignment]
+
+    # Map classification codes {-1: UNRESOLVED, 0: ESCAPED, 1: CAPTURED} to indices {0, 1, 2}
+    index_grid = shadow_result.classification_map.astype(np.int32) + 1
+    cmap = ListedColormap(["#f39c12", "#dceaf7", "#0d0d0d"])
+
+    bx_1d = shadow_result.bx_grid[shadow_result.config.image_height // 2, :]
+    by_1d = shadow_result.by_grid[:, shadow_result.config.image_width // 2]
+    b_max_x = float(np.max(np.abs(bx_1d)))
+    b_max_y = float(np.max(np.abs(by_1d)))
+
+    ax.imshow(
+        index_grid,
+        origin="lower",
+        extent=(-b_max_x, b_max_x, -b_max_y, b_max_y),
+        cmap=cmap,
+        vmin=0,
+        vmax=2,
+        interpolation="nearest",
+        zorder=1,
+    )
+
+    legend_handles: list[object] = [
+        Patch(
+            facecolor="#0d0d0d",
+            edgecolor="#000000",
+            label=f"Captured rays (Shadow, N={shadow_result.num_captured})",
+        ),
+        Patch(
+            facecolor="#dceaf7",
+            edgecolor="#7f9eb2",
+            label=f"Escaped rays (N={shadow_result.num_escaped})",
+        ),
+    ]
+    if shadow_result.num_unresolved > 0:
+        legend_handles.append(
+            Patch(
+                facecolor="#f39c12",
+                edgecolor="#b9770e",
+                label=f"Unresolved pixels (N={shadow_result.num_unresolved})",
+            )
+        )
+
+    if show_reference_radii:
+        shadow_circle = Circle(
+            (0.0, 0.0),
+            radius=shadow_result.b_shadow,
+            facecolor="none",
+            edgecolor="#e31a1c",
+            linestyle="-",
+            linewidth=2.0,
+            label=(
+                f"Shadow boundary $b_{{\\mathrm{{shadow}}}} = 3\\sqrt{{3}}GM/c^2 = "
+                f"{shadow_result.b_shadow:.3f}$"
+            ),
+            zorder=4,
+        )
+        rph_circle = Circle(
+            (0.0, 0.0),
+            radius=shadow_result.r_ph,
+            facecolor="none",
+            edgecolor="#ff7f00",
+            linestyle="--",
+            linewidth=1.5,
+            label=(
+                f"Photon sphere radius $r_{{\\mathrm{{ph}}}} = 3GM/c^2 = "
+                f"{shadow_result.r_ph:.2f}$"
+            ),
+            zorder=4,
+        )
+        rs_circle = Circle(
+            (0.0, 0.0),
+            radius=shadow_result.r_s,
+            facecolor="none",
+            edgecolor="#33a02c",
+            linestyle=":",
+            linewidth=1.6,
+            label=(
+                f"Schwarzschild radius $r_s = 2GM/c^2 = "
+                f"{shadow_result.r_s:.2f}$"
+            ),
+            zorder=4,
+        )
+        ax.add_patch(shadow_circle)
+        ax.add_patch(rph_circle)
+        ax.add_patch(rs_circle)
+        legend_handles.extend([shadow_circle, rph_circle, rs_circle])
+
+    ax.set_xlim(-b_max_x, b_max_x)
+    ax.set_ylim(-b_max_y, b_max_y)
+    ax.set_aspect("equal", adjustable="box")
+    ax.grid(True, linestyle=":", alpha=0.45, color="#555555")
+    ax.set_xlabel(r"Apparent impact coordinate $b_x$ [$GM/c^2$, geometric units $G=c=1$]")
+    ax.set_ylabel(r"Apparent impact coordinate $b_y$ [$GM/c^2$, geometric units $G=c=1$]")
+    ax.set_title(
+        f"Schwarzschild Black Hole Shadow on Observer Image Plane "
+        f"($r_{{\\mathrm{{obs}}}} = {shadow_result.config.r_obs:.1f}M$)\n"
+        "(Ray-Traced Classification Mask — Not a Radiative Accretion Photograph)"
+    )
+    ax.legend(handles=legend_handles, loc="upper right", fontsize=7.8, framealpha=0.92)
+    fig.tight_layout()
+    return fig, ax
+
+
+def plot_shadow_radial_profile(
+    shadow_result: ShadowRayTracingResult,
+    ax: Axes | None = None,
+) -> tuple[Figure, Axes]:
+    """Plot the radial classification profile across the observer image plane vs. b / M.
+
+    Clearly distinguishes r_s = 2GM/c^2, r_ph = 3GM/c^2, and b_shadow = 3*sqrt(3)*GM/c^2.
+    """
+    if not isinstance(shadow_result, ShadowRayTracingResult):
+        raise TypeError(
+            "shadow_result must be a ShadowRayTracingResult instance; "
+            f"got {type(shadow_result).__name__}."
+        )
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(6.8, 4.4), dpi=120)
+    else:
+        fig = ax.get_figure()  # type: ignore[assignment]
+
+    mass = shadow_result.config.M
+    b_flat = shadow_result.impact_parameter_grid.ravel() / mass
+    code_flat = shadow_result.classification_map.ravel()
+
+    order = np.argsort(b_flat)
+    b_sorted = b_flat[order]
+    code_sorted = code_flat[order]
+
+    ax.scatter(
+        b_sorted[code_sorted == 1],
+        np.ones(int(np.sum(code_sorted == 1))),
+        color="#111111",
+        s=16,
+        label="Captured (1)",
+        zorder=4,
+    )
+    ax.scatter(
+        b_sorted[code_sorted == 0],
+        np.zeros(int(np.sum(code_sorted == 0))),
+        color="#1f78b4",
+        s=16,
+        label="Escaped (0)",
+        zorder=4,
+    )
+    if np.any(code_sorted == -1):
+        ax.scatter(
+            b_sorted[code_sorted == -1],
+            np.full(int(np.sum(code_sorted == -1)), 0.5),
+            color="#f39c12",
+            marker="d",
+            s=28,
+            label="Unresolved",
+            zorder=5,
+        )
+
+    ax.axvline(
+        shadow_result.r_s / mass,
+        color="#33a02c",
+        linestyle=":",
+        linewidth=1.6,
+        label=r"$r_s / (GM/c^2) = 2$",
+    )
+    ax.axvline(
+        shadow_result.r_ph / mass,
+        color="#ff7f00",
+        linestyle="--",
+        linewidth=1.6,
+        label=r"$r_{\mathrm{ph}} / (GM/c^2) = 3$",
+    )
+    ax.axvline(
+        shadow_result.b_shadow / mass,
+        color="#e31a1c",
+        linestyle="-",
+        linewidth=1.8,
+        label=r"$b_{\mathrm{shadow}} / (GM/c^2) = 3\sqrt{3} \approx 5.196$",
+    )
+
+    ax.set_yticks([0.0, 0.5, 1.0])
+    ax.set_yticklabels(["Escaped", "Unresolved", "Captured"])
+    ax.set_ylim(-0.2, 1.25)
+    ax.set_xlabel(r"Dimensionless impact parameter $b / (GM/c^2)$")
+    ax.set_ylabel("Ray Classification")
+    ax.set_title("Radial Ray Classification Profile & Characteristic Scales")
+    ax.grid(True, linestyle=":", alpha=0.6)
+    ax.legend(loc="center right", fontsize=8.0, framealpha=0.92)
     fig.tight_layout()
     return fig, ax
