@@ -71,8 +71,6 @@ from scipy.integrate import quad
 from blackhole_lab.numerics.geodesics import (
     GeodesicConfig,
     GeodesicResult,
-    SolverStatus,
-    TerminationReason,
     first_integral_radicand,
     solve_photon_geodesic,
 )
@@ -261,7 +259,6 @@ def classify_photon_fate(result: GeodesicResult) -> PhotonFate:
         return PhotonFate.CAPTURED
 
     if result.reached_outer_boundary:
-        # Full scattering requires starting ingoing and exiting outgoing with r_min > r_ph
         if (
             result.config.direction == "ingoing"
             and result.du_dphi.size >= 2
@@ -337,7 +334,6 @@ def _estimate_convergence_indicator(
     """
     diag = result.diagnostics
     b_val = result.config.b
-    # Residual-based angular error bound: b^2 * max_abs_residual * delta_phi_finite
     max_res = float(getattr(diag, "max_abs_residual", 0.0))
     residual_bound = (
         (b_val * b_val) * max_res * delta_phi_finite if math.isfinite(max_res) else 0.0
@@ -487,20 +483,17 @@ def calculate_deflection_angle(
             geodesic_result=result,
         )
 
-    # Escaped photon deflection calculations
     periapsis_r = float(np.min(result.r))
     finite_deflection = delta_phi_finite - math.pi
 
     u0 = float(result.u[0])
     u_end = float(result.u[-1])
 
-    # Flat-space Euclidean chord angle correction arcsin(b * u0) + arcsin(b * u_end)
     arg0 = min(1.0, max(-1.0, b_val * u0))
     arg_end = min(1.0, max(-1.0, b_val * u_end))
     chord_correction = math.asin(arg0) + math.asin(arg_end)
     euclidean_chord_def = finite_deflection + chord_correction
 
-    # Exact curved-spacetime asymptotic tail quadrature on [0, u0] and [0, u_end]
     tail_0 = asymptotic_tail_angle(u0, scales.M, b_val)
     tail_end = asymptotic_tail_angle(u_end, scales.M, b_val)
     tail_total = tail_0 + tail_end
