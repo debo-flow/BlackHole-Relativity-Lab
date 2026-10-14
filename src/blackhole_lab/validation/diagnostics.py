@@ -24,6 +24,7 @@ should be assumed without inspecting ``max_abs_residual``.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
