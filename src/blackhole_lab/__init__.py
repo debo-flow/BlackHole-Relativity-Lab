@@ -1,7 +1,7 @@
-"""BlackHole-Relativity-Lab: Schwarzschild Spacetime & Photon Geodesics Engine.
+"""BlackHole-Relativity-Lab: Schwarzschild Spacetime, Geodesics, Lensing & Shadow Engine.
 
 All core equations use geometric units (G = c = 1) and Schwarzschild coordinates
-(t, r, theta, phi) restricted to the equatorial plane (theta = pi / 2).
+(t, r, theta, phi).
 """
 
 from blackhole_lab.numerics.geodesics import (
@@ -25,6 +25,15 @@ from blackhole_lab.numerics.lensing import (
     classify_photon_fate,
     unwrap_azimuthal_angle,
 )
+from blackhole_lab.numerics.shadow import (
+    CriticalBoundaryResult,
+    ObserverRayModel,
+    ShadowGridConfig,
+    ShadowRayTracingResult,
+    find_critical_impact_parameter,
+    sky_angle_to_impact_parameter,
+    trace_black_hole_shadow,
+)
 from blackhole_lab.physics.schwarzschild import (
     SchwarzschildScales,
     critical_impact_parameter,
@@ -34,6 +43,7 @@ from blackhole_lab.physics.schwarzschild import (
     reference_scales,
     schwarzschild_radius,
     second_order_weak_field_deflection,
+    shadow_angular_radius,
     validate_impact_parameter,
     validate_mass,
     validate_radius,
@@ -57,19 +67,23 @@ from blackhole_lab.visualization.plots import (
     split_trajectory_segments,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "__version__",
+    "CriticalBoundaryResult",
     "DeflectionResult",
     "GeodesicConfig",
     "GeodesicDiagnostics",
     "GeodesicResult",
     "LensingRegime",
+    "ObserverRayModel",
     "PhotonFate",
     "PhotonInitialConditions",
     "RadialDirection",
     "SchwarzschildScales",
+    "ShadowGridConfig",
+    "ShadowRayTracingResult",
     "SolverStatus",
     "TerminationReason",
     "TrajectorySegments",
@@ -82,6 +96,7 @@ __all__ = [
     "critical_impact_parameter",
     "effective_potential_u",
     "evaluate_geodesic_diagnostics",
+    "find_critical_impact_parameter",
     "first_integral_radicand",
     "initial_du_dphi",
     "metric_coefficient_f",
@@ -95,9 +110,12 @@ __all__ = [
     "reference_scales",
     "schwarzschild_radius",
     "second_order_weak_field_deflection",
+    "shadow_angular_radius",
     "simulate_lensing_bundle",
+    "sky_angle_to_impact_parameter",
     "solve_photon_geodesic",
     "split_trajectory_segments",
+    "trace_black_hole_shadow",
     "unwrap_azimuthal_angle",
     "validate_impact_parameter",
     "validate_mass",
